@@ -78,14 +78,18 @@ class ALSBlockSolver:
         n_blocks_total = 0
 
         for name, module in self.model.named_modules():
-            if not isinstance(module, nn.Linear):
-                continue
-
-            loss, n_blocks = self._solve_linear_layer(
-                name, module, batch, block_size
-            )
-            total_loss += loss
-            n_blocks_total += n_blocks
+            if isinstance(module, nn.Linear):
+                loss, n_blocks = self._solve_linear_layer(
+                    name, module, batch, block_size
+                )
+                total_loss += loss
+                n_blocks_total += n_blocks
+            elif self._is_conv1d(module):
+                loss, n_blocks = self._solve_conv1d_layer(
+                    name, module, batch, block_size
+                )
+                total_loss += loss
+                n_blocks_total += n_blocks
 
         if n_blocks_total > 0:
             logger.debug(
@@ -268,6 +272,84 @@ class ALSBlockSolver:
             n_blocks_total += n_blocks
 
         return total_loss / max(n_blocks_total, 1)
+
+    def _is_conv1d(self, module: nn.Module) -> bool:
+        """Check if module is a GPT-2 style Conv1D layer."""
+        cls_name = module.__class__.__name__
+        return cls_name == "Conv1D" and hasattr(module, "weight") and hasattr(module, "nf")
+
+    def _solve_conv1d_layer(
+        self,
+        name: str,
+        module,
+        batch: dict[str, torch.Tensor],
+        block_size: int,
+    ) -> tuple[float, int]:
+        """
+        Solve one Conv1D layer via block-wise ALS.
+
+        Conv1D stores weight as [d_in, d_out] (opposite of nn.Linear).
+        Forward: Y = X @ W  where X=[N, d_in], W=[d_in, d_out].
+        ALS solution: W_new = (X^T X + λI)^(-1) X^T Y, producing [d_in, d_out].
+        """
+        weight = module.weight.data  # [d_in, d_out]
+        d_in, d_out = weight.shape
+        device = weight.device
+
+        activations: list[torch.Tensor] = []
+        hook_handle = module.register_forward_pre_hook(
+            lambda _mod, inp: activations.append(inp[0].detach())
+        )
+
+        try:
+            with torch.no_grad():
+                _ = self.model(**{k: v.to(device) for k, v in batch.items()
+                                  if isinstance(v, torch.Tensor)})
+            hook_handle.remove()
+
+            if not activations:
+                return 0.0, 0
+
+            X = activations[0]
+            if X.dim() == 3:
+                X = X.reshape(-1, d_in)
+
+            n_blocks = (d_out + block_size - 1) // block_size
+            total_loss = 0.0
+
+            # Precompute (X^T X + λI)^(-1) — shared across all blocks
+            XtX = X.T @ X  # [d_in, d_in]
+            reg = self.reg_lambda * torch.eye(d_in, device=device, dtype=X.dtype)
+            XtX_reg = XtX + reg
+
+            try:
+                L = torch.linalg.cholesky(XtX_reg)
+            except RuntimeError:
+                L = None
+
+            for i in range(n_blocks):
+                start = i * block_size
+                end = min(start + block_size, d_out)
+
+                Y_block = X @ weight[:, start:end]  # [N, block]
+                XtY = X.T @ Y_block  # [d_in, block]
+
+                if L is not None:
+                    W_new_block = torch.cholesky_solve(XtY, L)  # [d_in, block]
+                else:
+                    W_new_block = torch.linalg.lstsq(XtX_reg, XtY).solution
+
+                weight[:, start:end] = W_new_block.to(weight.dtype)
+
+                recon_error = torch.norm(X @ W_new_block - Y_block) ** 2
+                total_loss += recon_error.item()
+
+            return total_loss, n_blocks
+
+        except Exception as e:
+            logger.warning("ALS Conv1D solve failed for layer '%s': %s", name, e)
+            hook_handle.remove()
+            return 0.0, 0
 
     def clear_cache(self) -> None:
         """Clear cached inverses (useful between runs)."""
