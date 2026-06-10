@@ -330,6 +330,15 @@ class AltOptTrainer:
         self.optimizer.step()
         return loss.item() if isinstance(loss, torch.Tensor) else loss
 
+    def _current_phase_name(self) -> str:
+        if self.altopt is not None and self.altopt.state.current_phase is not None:
+            return self.altopt.state.current_phase.value.upper()
+        if self.altopt is not None:
+            return "SGD"
+        if self.config.optimizer_type == "adamw":
+            return "AdamW"
+        return "UNKNOWN"
+
     # ── Hooks ───────────────────────────────────────────────────────
 
     def _on_step_start(self, batch):
@@ -337,7 +346,8 @@ class AltOptTrainer:
 
     def _on_step_end(self, loss: float):
         self.state.record_loss(loss)
-        flops = self.flops_profiler._heuristic_flops()
+        phase = self._current_phase_name()
+        flops = self.flops_profiler.record_step(phase)
         self.state.record_flops(flops)
         mem = self.memory_tracker.snapshot()
         self.state.record_memory(mem["allocated_mb"])
