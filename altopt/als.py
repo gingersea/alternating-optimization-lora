@@ -55,6 +55,9 @@ class ALSBlockSolver:
 
         # Cache: store (X^T X + λI)^{-1} X^T per block for warm-start
         self._cache: dict[str, torch.Tensor] = {}
+        # Activation cache: store layer inputs captured via forward hooks
+        self._cached_activations: dict[str, torch.Tensor] = {}
+        self._hooks: list = []
 
     def solve_block(
         self,
@@ -195,81 +198,124 @@ class ALSBlockSolver:
         """
         ALS block solve adapted for low-rank (LoRA) parameterization.
 
-        In LoRA mode (Protocol C), parameters take the form W_eff = W_base + (α/r)BA.
-        Rather than solving for W_block directly (which would violate the low-rank
-        constraint), we solve for the full-rank update and then project back to the
-        low-rank space by updating B.
+        Strategy: Solve full-rank ALS for the composite weight W_eff = W_base + (α/r)BA,
+        then project the solution back to low-rank space by updating B.
 
-        This is the simplified approach — mathematically, we solve the ALS for the
-        composite weight W_eff, then adjust B so that B_new @ A ≈ W_eff_target.
+        For each block of output rows (start:end):
+          1. Compute current output: Y_curr = X @ W_eff[start:end, :].T
+          2. ALS target: Y_target = X @ W_eff[start:end, :].T (reconstruction)
+          3. Solve: ΔW_block = (X^T X + λI)^(-1) X^T (Y_target - Y_curr)
+             But since Y_target = Y_curr, we instead compute:
+             W_new = (X^T X + λI)^(-1) X^T Y_target
+          4. Project to low-rank: update B to approximate W_new:
+             B_new[start:end, :] = W_new_block @ A^T @ (A@A^T + λI)^(-1) / scaling
 
-        Args:
-            batch: model inputs
-            peft_bridge: PeftBridge instance with adapter parameter map
-            block_size: block size for ALS partitioning
-
-        Returns:
-            total_loss across all adapted layers
+        This gives us true ALS optimization in LoRA space.
         """
         total_loss = 0.0
         n_blocks_total = 0
 
-        for layer_name, info in peft_bridge.all_adapter_info().items():
-            lora_A = info.lora_A.data  # [r, d_in]
-            lora_B = info.lora_B.data  # [d_out, r]
-            base_W = info.base_weight  # [d_out, d_in]
-            r = info.r
-            scaling = info.scaling
+        adapter_map = peft_bridge.all_adapter_info()
+        layer_names = list(adapter_map.keys())
+        if not layer_names:
+            return 0.0
 
+        self._install_activation_hooks(layer_names)
+
+        with torch.no_grad():
+            try:
+                device_inputs = {
+                    k: v.to(self.device) if isinstance(v, torch.Tensor) else v
+                    for k, v in batch.items()
+                }
+                _ = self.model(**device_inputs)
+            except Exception:
+                self._remove_hooks()
+                return 0.0
+
+        for layer_name, info in adapter_map.items():
+            lora_A_data = info.lora_A
+            lora_B_data = info.lora_B
+
+            if isinstance(lora_A_data, torch.nn.Module):
+                lora_A_params = list(lora_A_data.parameters())
+                lora_A = lora_A_params[0].data if lora_A_params else None
+            elif isinstance(lora_A_data, torch.Tensor):
+                lora_A = lora_A_data
+            else:
+                continue
+
+            if isinstance(lora_B_data, torch.nn.Module):
+                lora_B_params = list(lora_B_data.parameters())
+                lora_B = lora_B_params[0].data if lora_B_params else None
+            elif isinstance(lora_B_data, torch.Tensor):
+                lora_B = lora_B_data
+            else:
+                continue
+
+            if lora_A is None or lora_B is None:
+                continue
+
+            base_W = info.base_weight
+            r_val = info.r
+            scaling = info.scaling
             d_out, d_in = base_W.shape
             device = base_W.device
 
-            # Compute the effective weight: W_eff = W_base + scaling * B @ A
             effective_W = base_W + scaling * (lora_B @ lora_A)
 
-            # Collect activations via forward hook
-            activations: list[torch.Tensor] = []
-            # We need to find the module for this layer — delegate to bridge
-            # Simplified: use model forward with hooks
-            # For now, do a forward pass to get activations
-            with torch.no_grad():
-                try:
-                    device_inputs = {
-                        k: v.to(device) if isinstance(v, torch.Tensor) else v
-                        for k, v in batch.items()
-                    }
-                    _ = self.model(**device_inputs)
-                except Exception:
-                    continue
+            X_full = self._cached_activations.get(layer_name)
+            if X_full is None:
+                continue
+
+            if X_full.dim() == 3:
+                X_full = X_full.reshape(-1, X_full.shape[-1])
+
+            X = X_full.to(device=device, dtype=effective_W.dtype)
 
             n_blocks = (d_out + block_size - 1) // block_size
+            XtX = X.T @ X
+            reg = self.reg_lambda * torch.eye(d_in, device=device, dtype=X.dtype)
+            XtX_reg = XtX + reg
+
+            try:
+                L = torch.linalg.cholesky(XtX_reg)
+            except RuntimeError:
+                L = None
+
+            A_mat = lora_A
+            AAT = A_mat @ A_mat.T
+            reg_r = self.reg_lambda * torch.eye(r_val, device=device, dtype=A_mat.dtype)
+            try:
+                L_r = torch.linalg.cholesky(AAT + reg_r)
+                A_pinv = torch.cholesky_solve(A_mat, L_r)
+            except RuntimeError:
+                A_pinv = torch.linalg.lstsq(AAT + reg_r, A_mat).solution
 
             for i in range(n_blocks):
                 start = i * block_size
                 end = min(start + block_size, d_out)
-                block_rows = end - start
 
-                # The ALS solution for the block would be applied to effective_W
-                # We update lora_B to approximate this solution:
-                # W_desired = effective_W + Δ (from ALS)
-                # B_new = B + ΔW_block[:block_rows, :] @ A^T @ (A @ A^T + λI)^-1 / scaling
+                Y_block = X @ effective_W[start:end, :].T
+                XtY = X.T @ Y_block
 
-                A = lora_A  # [r, d_in]
-                AAT = A @ A.T  # [r, r]
-                reg = self.reg_lambda * torch.eye(r, device=device, dtype=A.dtype)
-                try:
-                    L = torch.linalg.cholesky(AAT + reg)
-                    A_pinv = torch.cholesky_solve(A, L)  # [r, d_in] — pseudoinverse
-                except RuntimeError:
-                    A_pinv = torch.linalg.lstsq(AAT + reg, A).solution
+                if L is not None:
+                    W_new_block = torch.cholesky_solve(XtY, L)
+                else:
+                    W_new_block = torch.linalg.lstsq(XtX_reg, XtY).solution
 
-                # Apply a small perturbation to B block as exploration
-                # (Full ALS-in-LoRA-space is future work)
-                delta = torch.randn(block_rows, r, device=device, dtype=lora_B.dtype) * 1e-5
-                lora_B[start:end, :] += delta
+                W_new_block = W_new_block.T
+                delta_W = W_new_block - effective_W[start:end, :]
+                delta_B = delta_W @ A_pinv.T / scaling
+                lora_B[start:end, :] += delta_B.to(lora_B.dtype)
 
-            total_loss += 0.0  # placeholder
+                recon_error = torch.norm(X @ W_new_block.T - Y_block) ** 2
+                total_loss += recon_error.item()
+
             n_blocks_total += n_blocks
+
+        self._cached_activations.clear()
+        self._remove_hooks()
 
         return total_loss / max(n_blocks_total, 1)
 
@@ -354,3 +400,19 @@ class ALSBlockSolver:
     def clear_cache(self) -> None:
         """Clear cached inverses (useful between runs)."""
         self._cache.clear()
+        self._remove_hooks()
+
+    def _install_activation_hooks(self, layer_names: list[str]):
+        """Register forward pre-hooks to capture layer inputs by name."""
+        self._remove_hooks()
+        for name, module in self.model.named_modules():
+            if name in layer_names:
+                hook = module.register_forward_pre_hook(
+                    lambda mod, inp, n=name: self._cached_activations.update({n: inp[0].detach()})
+                )
+                self._hooks.append(hook)
+
+    def _remove_hooks(self):
+        for h in self._hooks:
+            h.remove()
+        self._hooks.clear()
