@@ -57,6 +57,20 @@ LoRA (Hu et al., 2022) constrains weight updates to $\Delta W = (\alpha/r)BA$. T
 
 Sharpness-Aware Minimization (SAM; Foret et al., 2021) minimizes worst-case loss in parameter neighborhoods. Andriushchenko & Flammarion (2022) showed SAM's benefit comes from worst-case perturbations. Random Weight Perturbation (RWP; Li et al., 2024) reveals a generalization-convergence trade-off: larger perturbation variance improves generalization but slows convergence. Welling & Teh (2011) showed that stochastic gradient Langevin dynamics (SGLD) with Gaussian noise converges to the Bayesian posterior. Our perturbation phase operates as implicit RWP, and we observe the predicted trade-off: perturbation improves evaluation perplexity at the cost of higher training loss (Section 5.4).
 
+### 2.4 Positioning
+
+| Work | Method | Scale | Factorial? | Key Limitation |
+|------|--------|-------|-----------|----------------|
+| Taylor et al. (2016) | ADMM | Small CNNs | No | Batch only |
+| Zeng et al. (2019) | BCD | Small MLPs | No | $\mathcal{O}(1/k)$ to critical point |
+| Wang et al. (2018) | mDLAM | Small MLPs | No | Multi-convexity assumption |
+| Choromanska et al. (2019) | AM-Adam | Small CNNs | No | Matches SGD only |
+| OPLoRA (2025) | Alternating | LoRA LLMs | No | Optimizer-only factor |
+| Fast Forward (2024) | Line search | LoRA LLMs | No | Fails full-rank |
+| **This work** | **ASP** | **8 archs, 12-32L** | **Yes (2×2)** | **Depth boundary ≥28L** |
+
+Our work is the first to: (a) apply factorial design to disentangle optimizer and parameter form effects, (b) test alternating optimization across eight architectures including GPU 7B scale, and (c) identify a depth boundary for ALS-based methods.
+
 ## 3. Methodology: 2×2 Factorial Design
 
 ### 3.1 The Attribution Problem
@@ -348,6 +362,18 @@ ASP may have advantages in:
 ASP full-rank training exhibits CV=23--120% across seeds, compared to AdamW's CV<5%. We interpret this as a genuine property of ALS-based optimization rather than measurement noise, based on the consistent low CV of AdamW under identical experimental conditions (which serves as a natural control: if measurement noise were dominant, AdamW would exhibit comparable CV). The block-wise exact solutions, while deterministic given the current activations, are highly sensitive to the specific batch composition and initialization seed. The instability manifests as divergent convergence trajectories — some seeds converge well (PPL~1,000 at 800 steps), others barely improve (PPL~18,000 at 800 steps). This finding has practical implications: any deployment of ALS-based optimization would require either multiple independent training runs or explicit stabilization techniques.
 
 ## 8. Conclusion
+
+### Practical Takeaways
+
+| Scenario | Recommendation | Rationale |
+|----------|---------------|-----------|
+| Standard post-training (≤800 steps) | **LoRA + AdamW** (Protocol D) | Best PPL at all budgets, low variance |
+| Low-data regime (≤400 samples) | **ASP** (Protocol A) over AdamW at >400 steps | ASP resists overfitting; AdamW degrades |
+| Model ≤ 24 layers | ASP viable (converges) | Within stable depth regime |
+| Model ≥ 28 layers | **Avoid ASP** (diverges) | Depth boundary; needs stabilization |
+| Need flat minima | ASP with perturbation phase | Encourages flatter solutions (SAM-like) |
+| Limited GPU memory | 8-bit AdamW + LoRA | 21.9GB for 7B, single 32GB GPU |
+| Parallel training | ASP (independent ALS blocks) | Block-wise ALS trivially parallelizable |
 
 | # | Finding | Evidence | Section |
 |---|---------|----------|---------|
