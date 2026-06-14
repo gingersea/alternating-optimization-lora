@@ -182,21 +182,24 @@ A critical confound in our convergence trajectory analysis is that the A-B gap m
 
 **Table 3: AdamW Overfitting Analysis (OPT-125m)**
 
-| Train Samples | 200-step Eval Loss | 400-step Eval Loss | Overfitting? |
-|---------------|-------------------|-------------------|-------------|
-| 400 | 4.017 | 4.170 ↑ | Yes |
-| 800 | 3.845 | 4.089 ↑ | Yes |
-| 1600 | 3.948 | 4.001 ↑ | Mild |
+| Train Samples | Steps | Train Loss | Eval Loss | Overfitting? |
+|---------------|-------|-----------|-----------|-------------|
+| 400 | 200 | 0.001 | 4.017 | — |
+| 400 | 400 | 0.341 | 4.170 | Yes (train↓, eval↑) |
+| 800 | 200 | 0.001 | 3.845 | — |
+| 800 | 400 | 5.810 | 4.089 | Yes (eval↑) |
+| 1600 | 200 | 5.019 | 3.948 | — |
+| 1600 | 400 | 0.206 | 4.001 | Mild (eval↑) |
 
 **Finding**: AdamW's eval loss consistently *increases* from 200 to 400 steps at all data sizes, indicating overfitting. The best AdamW result is achieved at 200 steps with 800 samples (eval loss=3.85, PPL=46.8). In contrast, ASP at 1200 steps maintains train_loss≈eval_loss≈8.2 — it does not overfit even at 3× the training duration.
 
-**Fair Gap Recalculation.** The raw A-B gap at 1200 steps (3,527 PPL) conflates ASP's slow convergence with AdamW's overfitting. A fair comparison using AdamW at its optimal checkpoint (200 steps, 800 samples) versus ASP at 1200 steps yields:
+**Fair Gap Recalculation.** The raw A-B gap at 1200 steps (3,527 PPL) conflates ASP's slow convergence with AdamW's overfitting. A comparison using AdamW at its optimal checkpoint (200 steps, 800 samples, eval loss=3.85) versus ASP at its most-trained checkpoint (1200 steps, eval loss=8.19) yields:
 
-$$\text{Fair gap} = 8.19 - 3.85 = 4.34 \text{ loss} \approx 78 \text{ PPL}$$
+$$\text{Comparison gap} = 8.19 - 3.85 = 4.34 \text{ loss} \approx 78 \text{ PPL}$$
 
-This is **45× smaller** than the raw 1200-step gap. While ASP still underperforms, the magnitude is substantially reduced.
+This is **45× smaller** than the raw 1200-step gap. **Caveat**: this comparison is temporally asymmetric — it uses AdamW's best checkpoint (early) against ASP's latest checkpoint (late). A fully symmetric comparison (both at 200 steps, 800 samples) is not feasible because ASP has not converged at 200 steps in full-rank mode. The comparison above represents a practical assessment: AdamW achieves its best result early then degrades, while ASP monotonically improves, making late-ASP vs. best-AdamW the relevant practical comparison. The raw eval loss values (ASP: 8.19 at 1200 steps; AdamW: 3.85 at 200 steps, 800 samples) are from the experimental runs described in Sections 5.3 and 5.4.
 
-**ASP Implicit Regularization.** ASP's resistance to overfitting is a novel finding. The ALS→SGD alternation appears to provide implicit regularization: each ALS step introduces parameter perturbation that prevents the model from memorizing the training data, while SGD refinement maintains a balance between fitting and generalization. This property may be valuable in low-data post-training scenarios where AdamW's overfitting is problematic.
+**ASP Implicit Regularization (Preliminary Observation).** ASP's resistance to overfitting — maintaining train_loss≈eval_loss at 1200 steps while AdamW degrades — is a preliminary observation that warrants further investigation. The ALS→SGD alternation exhibits properties consistent with implicit regularization, which may arise from ALS-induced parameter perturbation preventing memorization of the training data. A full characterization would require measuring ASP eval loss at multiple checkpoints (200, 400, 800, 1200) with varying data sizes, which we leave to future work. This property may be valuable in low-data post-training scenarios where AdamW's overfitting is problematic.
 
 ### 5.5 RQ4: Perturbation Effect
 
@@ -223,6 +226,8 @@ We test Protocol C with and without low-rank ALS at 100, 200, and 400 steps on O
 | 400 | 103.3 | 131.8 | +27.6% |
 
 **Finding**: Low-rank ALS consistently *worsens* Protocol C at ≤400 steps. This mirrors the full-rank finding: ALS introduces distribution shift that requires SGD digestion, and the projection from full-rank to low-rank ($\Delta W \to \Delta B$) loses information. The synergy between ALS and LoRA does not appear at these step counts; whether it emerges at longer training horizons (>500 steps) remains an open question enabled by our low-rank ALS implementation.
+
+*Note on Table 4 vs Table 1 discrepancy.* Table 4 reports Protocol C baseline PPL=103.6 at 100 steps, while Table 1 reports PPL=5.5. The 18× difference arises from different experimental configurations: Table 1 used built-in `LoRALayer` with batch_size=2 and a smaller evaluation set (50 samples), while Table 4 used `PeftBridge` (HuggingFace PEFT) with batch_size=1 and a larger evaluation set (80 samples). The PEFT implementation yields a different LoRA adapter structure that converges more slowly on small datasets. We report both to maintain transparency, and note that the *relative* comparison (with-ALS vs. without-ALS) is internally consistent within each experimental configuration.
 
 ## 6. Mathematical Analysis
 
