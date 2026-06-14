@@ -27,6 +27,8 @@ Post-training — adapting a pretrained language model to downstream tasks throu
 
 Comparing ASP and LoRA faces a fundamental confound: ASP is an optimizer innovation (determining *how* parameters are updated), while LoRA is a parameter structure innovation (determining *what form* the update takes). Any direct numerical comparison inevitably conflates these two independent variables, making performance attribution impossible. Furthermore, ALS matrix inversion and SGD gradient computation have fundamentally different computational cost profiles, requiring careful resource normalization. A recent survey of PEFT methods (Lialin et al., 2023) explicitly notes the "limited theoretical understanding" of how optimizer choice interacts with parameter-efficient architectures — precisely the gap this work addresses.
 
+**Significance.** Beyond the specific ASP-vs-LoRA comparison, this work's value is fourfold. *Methodologically*, the 2×2 factorial protocol is reusable: any pair of post-training strategies confounded by differing optimizers and parameter structures can be compared using this template, from adapter-based methods (Houlsby et al., 2019) to prompt tuning (Lester et al., 2021). *Practically*, our results provide actionable guidance — LoRA+AdamW is optimal at ≤800 steps (covering most real-world fine-tuning budgets), early stopping prevents AdamW overfitting, and ASP's implicit regularization offers advantages in low-data regimes. *Theoretically*, the non-monotonic convergence pattern, depth boundary derivation, and PAC-Bayes regularization analysis advance understanding of ALS-based optimization in deep networks. *As negative results*, our finding that low-rank ALS consistently degrades Protocol C and that ASP diverges beyond ~26 layers saves future researchers from unproductive investigation while precisely defining the scope of applicability. In an era where post-training costs dominate LLM deployment budgets, rigorous methodology for optimizer comparison has direct economic impact.
+
 **Contributions.** This paper makes five contributions:
 
 1. **A 2×2 factorial protocol** crossing optimizer type (ASP vs AdamW) with parameter form (full-rank vs LoRA), under unified FLOPs accounting and identical evaluation, enabling clean attribution of main effects and their interaction. Applicable to any post-training comparison confounded by optimizer and parameter structure.
@@ -439,6 +441,10 @@ This paper underwent four rounds of peer review. All substantive concerns were a
 [25] Lee, Y., et al. (2026). Learning Rate Matters: Vanilla LoRA May Suffice for LLM Fine-tuning. arXiv:2602.04998.
 
 [26] Raschka, S. (2023). Practical Tips for Finetuning LLMs Using LoRA. *Lightning AI Magazine*.
+
+[27] Houlsby, N., et al. (2019). Parameter-Efficient Transfer Learning for NLP. *ICML*.
+
+[28] Lester, B., et al. (2021). The Power of Scale for Parameter-Efficient Prompt Tuning. *EMNLP*.
 
 ---
 
