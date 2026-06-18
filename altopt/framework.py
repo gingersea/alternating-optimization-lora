@@ -49,10 +49,8 @@ class PhaseSchedule:
 
     @classmethod
     def default_schedule(cls, d_model: int) -> "PhaseSchedule":
-        """Default schedule: ALS (coarse) → SGD (refine) → Perturb (escape) → repeat."""
         return cls(
             phases=[
-                PhaseConfig(phase=Phase.ALS, steps=1, block_size=min(1024, d_model // 4)),
                 PhaseConfig(phase=Phase.SGD, steps=100, lr=1e-4),
                 PhaseConfig(phase=Phase.PERTURB, steps=1, noise_scale=1e-3),
             ],

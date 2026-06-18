@@ -42,14 +42,14 @@ def batch():
 class TestPhaseSchedule:
     """Tests for phase schedule construction and iteration."""
 
-    def test_default_schedule_has_three_phases(self):
+    def test_default_schedule_has_two_phases(self):
         schedule = PhaseSchedule.default_schedule(d_model=768)
-        assert len(schedule.phases) == 3
+        assert len(schedule.phases) == 2
         assert schedule.cycles == 3
 
     def test_phase_types_in_order(self):
         schedule = PhaseSchedule.default_schedule(d_model=768)
-        expected = [Phase.ALS, Phase.SGD, Phase.PERTURB]
+        expected = [Phase.SGD, Phase.PERTURB]
         actual = [p.phase for p in schedule.phases]
         assert actual == expected
 

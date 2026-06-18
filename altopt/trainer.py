@@ -263,7 +263,6 @@ class AltOptTrainer:
         if cfg.optimizer_type == "altopt":
             schedule = cfg.phase_schedule or PhaseSchedule(
                 phases=[
-                    PhaseConfig(phase=Phase.ALS, steps=1, block_size=1024),
                     PhaseConfig(phase=Phase.SGD, steps=100, lr=cfg.lr),
                     PhaseConfig(phase=Phase.PERTURB, steps=1, noise_scale=1e-3),
                 ],
@@ -296,7 +295,6 @@ class AltOptTrainer:
         if self._has_altopt:
             schedule = self.config.phase_schedule or PhaseSchedule(
                 phases=[
-                    PhaseConfig(phase=Phase.ALS, steps=1, block_size=1024),
                     PhaseConfig(phase=Phase.SGD, steps=100, lr=self.config.lr),
                     PhaseConfig(phase=Phase.PERTURB, steps=1, noise_scale=1e-3),
                 ],

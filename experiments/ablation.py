@@ -59,6 +59,9 @@ def _make_tokenized_dataloader(dataset_name, tokenizer, split, max_len, batch_si
 
 
 def run_quick_train(model, tokenizer, dl, eval_dl, config_overrides, n_steps):
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    model = model.to(device)
+    
     cfg = TrainerConfig(
         protocol="A",
         optimizer_type=config_overrides.get("optimizer_type", "altopt"),
@@ -71,7 +74,11 @@ def run_quick_train(model, tokenizer, dl, eval_dl, config_overrides, n_steps):
         seed=42,
     )
     if config_overrides.get("phase_schedule"):
-        cfg.phase_schedule = config_overrides["phase_schedule"]
+        schedule = config_overrides["phase_schedule"]
+        steps_per_cycle = sum(p.steps for p in schedule.phases)
+        if steps_per_cycle > 0:
+            schedule.cycles = max(1, (n_steps + steps_per_cycle - 1) // steps_per_cycle)
+        cfg.phase_schedule = schedule
 
     trainer = AltOptTrainer(model, cfg, eval_dataloader=eval_dl, tokenizer=tokenizer)
     return trainer.train(dl)
@@ -117,8 +124,7 @@ def rq2_efficiency_frontier(
 
     schedule = PhaseSchedule(
         phases=[
-            PhaseConfig(phase=Phase.ALS, steps=1, block_size=512),
-            PhaseConfig(phase=Phase.SGD, steps=50, lr=1e-4),
+            PhaseConfig(phase=Phase.SGD, steps=51, lr=1e-4),
             PhaseConfig(phase=Phase.PERTURB, steps=1, noise_scale=1e-3),
         ],
         cycles=2,
@@ -131,7 +137,8 @@ def rq2_efficiency_frontier(
                               n_steps=n_steps)
 
     logger.info("RQ2: Running Protocol B (AdamW full-rank)")
-    state_b = run_quick_train(model_b.clone(), tokenizer, train_dl, eval_dl,
+    model_b = AutoModelForCausalLM.from_pretrained(model_name)
+    state_b = run_quick_train(model_b, tokenizer, train_dl, eval_dl,
                               {"optimizer_type": "adamw", "parameter_form": "full_rank",
                                "label": "rq2_b"},
                               n_steps=n_steps)
@@ -185,7 +192,6 @@ def rq3_perturbation_effect(
     # Protocol A: Full-Rank AltOpt WITH perturbation
     schedule_with = PhaseSchedule(
         phases=[
-            PhaseConfig(phase=Phase.ALS, steps=1, block_size=512),
             PhaseConfig(phase=Phase.SGD, steps=40, lr=1e-4),
             PhaseConfig(phase=Phase.PERTURB, steps=1, noise_scale=1e-3),
         ],
@@ -194,7 +200,6 @@ def rq3_perturbation_effect(
     # Full-Rank AltOpt WITHOUT perturbation
     schedule_without = PhaseSchedule(
         phases=[
-            PhaseConfig(phase=Phase.ALS, steps=1, block_size=512),
             PhaseConfig(phase=Phase.SGD, steps=41, lr=1e-4),
         ],
         cycles=2,
@@ -209,7 +214,8 @@ def rq3_perturbation_effect(
                                  n_steps=100)
 
     logger.info("RQ3: AltOpt WITHOUT perturbation")
-    state_without = run_quick_train(model_without.clone(), tokenizer, train_dl, eval_dl,
+    model_without = AutoModelForCausalLM.from_pretrained(model_name)
+    state_without = run_quick_train(model_without, tokenizer, train_dl, eval_dl,
                                     {"phase_schedule": schedule_without, "label": "rq3_without"},
                                     n_steps=100)
 
@@ -330,7 +336,8 @@ def rq5_synergy(
                               n_steps=n_steps)
 
     logger.info("RQ5: Protocol D (LoRA+AdamW)")
-    state_d = run_quick_train(model_d.clone(), tokenizer, train_dl, eval_dl,
+    model_d = AutoModelForCausalLM.from_pretrained(model_name)
+    state_d = run_quick_train(model_d, tokenizer, train_dl, eval_dl,
                               {"optimizer_type": "adamw", "parameter_form": "lora",
                                "label": "rq5_d"},
                               n_steps=n_steps)
