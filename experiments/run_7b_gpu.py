@@ -131,11 +131,13 @@ def run_protocol(protocol_label, opt_type, param_form, seed, n_steps):
         MODEL_NAME,
         torch_dtype=torch.bfloat16,
         device_map="auto",
-        trust_remote_code=True,
+        trust_remote_code=False,
+        local_files_only=True,
     )
     model.gradient_checkpointing_enable()
 
-    tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME, trust_remote_code=True)
+    tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME, trust_remote_code=False,
+                                              local_files_only=True)
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
 
