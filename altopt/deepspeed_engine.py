@@ -175,13 +175,6 @@ class DeepSpeedConfig:
                 "reduce_bucket_size": 2e8,
             }
 
-        # Communication
-        if self.zero_stage >= 1:
-            cfg.setdefault("zero_optimization", {})
-            cfg["zero_optimization"]["communication_data_type"] = (
-                self.communication_data_type
-            )
-
         return cfg
 
     def save(self, path: str) -> None:
