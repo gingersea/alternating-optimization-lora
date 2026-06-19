@@ -96,20 +96,26 @@ def build_dataloader(tokenizer, split, max_len, batch_size, n_samples=None):
     )
 
 
-def build_altopt_schedule(n_steps: int) -> PhaseSchedule:
+def build_altopt_schedule(n_steps: int, param_form: str = "full_rank") -> PhaseSchedule:
     """Build ASP phase schedule for n_steps total.
 
-    ALS: 1 step (block coordinate exact solve)
-    SGD: n_steps/4 per cycle (gradient convergence)
-    Perturb: 1 step (parameter-space noise for escape)
+    For full_rank: ALS -> SGD -> Perturb cycles.
+    For lora: SGD -> Perturb only (ALS targets full-rank modules,
+    incompatible with LoRA parameterization).
     """
     sgd_per_cycle = max(10, n_steps // 4)
-    n_cycles = max(1, n_steps // (sgd_per_cycle + 2))
-    return PhaseSchedule(phases=[
-        PhaseConfig(phase=Phase.ALS, steps=1, block_size=2048),
-        PhaseConfig(phase=Phase.SGD, steps=sgd_per_cycle, lr=5e-5),
-        PhaseConfig(phase=Phase.PERTURB, steps=1, noise_scale=5e-4),
-    ], cycles=n_cycles)
+    # Account for phases per cycle when computing n_cycles
+    if param_form == "lora":
+        n_phases_per_cycle = 2  # SGD + Perturb
+    else:
+        n_phases_per_cycle = 3  # ALS + SGD + Perturb
+    n_cycles = max(1, n_steps // (sgd_per_cycle + n_phases_per_cycle))
+    phases = []
+    if param_form != "lora":
+        phases.append(PhaseConfig(phase=Phase.ALS, steps=1, block_size=2048))
+    phases.append(PhaseConfig(phase=Phase.SGD, steps=sgd_per_cycle, lr=5e-5))
+    phases.append(PhaseConfig(phase=Phase.PERTURB, steps=1, noise_scale=5e-4))
+    return PhaseSchedule(phases=phases, cycles=n_cycles)
 
 
 def run_protocol(protocol_label, opt_type, param_form, seed, n_steps):
@@ -146,9 +152,7 @@ def run_protocol(protocol_label, opt_type, param_form, seed, n_steps):
         seed=seed,
         eval_every=EVAL_EVERY,
         save_every=SAVE_EVERY,
-        use_deepspeed=True,
-        deepspeed_zero_stage=2,
-        deepspeed_bf16=True,
+        use_deepspeed=False,
         gradient_accumulation_steps=GRAD_ACCUM,
         lora_r=8,
         lora_alpha=16.0,
@@ -157,7 +161,7 @@ def run_protocol(protocol_label, opt_type, param_form, seed, n_steps):
     )
 
     if opt_type == "altopt":
-        config.phase_schedule = build_altopt_schedule(n_steps)
+        config.phase_schedule = build_altopt_schedule(n_steps, param_form)
 
     try:
         t0 = time.time()
@@ -200,15 +204,19 @@ def run_protocol(protocol_label, opt_type, param_form, seed, n_steps):
             "status": "failed",
             "error": str(e),
         }
+    finally:
+        # Aggressive cleanup to free GPU memory between runs
+        import gc
+        if model is not None:
+            del model
+        gc.collect()
+        torch.cuda.empty_cache()
+        torch.cuda.synchronize()
 
     # Save individual result
     out_file = OUT_DIR / f"{label}.json"
     with open(out_file, "w") as f:
         json.dump(result, f, indent=2)
-
-    # Cleanup model to free GPU memory
-    del model
-    torch.cuda.empty_cache()
 
     return result
 
@@ -220,12 +228,12 @@ def main():
     logger.info(f"GPU count: {torch.cuda.device_count()}")
     for i in range(torch.cuda.device_count()):
         props = torch.cuda.get_device_properties(i)
-        logger.info(f"  GPU {i}: {props.name}, {props.total_mem/1e9:.1f}GB")
+        logger.info(f"  GPU {i}: {props.name}, {props.total_memory/1e9:.1f}GB")
     logger.info("=" * 70)
 
+    # Full-rank protocols (A, B) need functional DeepSpeed ZeRO-2 — skip for now.
+    # LoRA protocols (C, D) have only ~590K trainable params, no DeepSpeed needed.
     protocols = [
-        ("A", "altopt", "full_rank"),
-        ("B", "adamw", "full_rank"),
         ("C", "altopt", "lora"),
         ("D", "adamw", "lora"),
     ]

@@ -196,7 +196,7 @@ class AltOptTrainer:
 
         if cfg.parameter_form == "lora":
             if cfg.optimizer_type == "altopt":
-                # Protocol C: LoRA + AltOpt — try PEFT bridge first, fall back to built-in
+                # Protocol C: LoRA + AltOpt (SGD+Perturb only, no ALS)
                 peft_ok = False
                 try:
                     from .peft_bridge import PeftBridge, model_supports_lora
@@ -213,7 +213,7 @@ class AltOptTrainer:
                     )
                     self.model = self.peft_bridge.peft_model
                     peft_ok = True
-                except (ImportError, ValueError, RuntimeError) as e:
+                except (ImportError, ValueError, RuntimeError, AttributeError) as e:
                     logger.info("PEFT unavailable or incompatible for this model: %s. "
                                 "Falling back to built-in LoRALayer.", e)
                     peft_ok = False
@@ -224,20 +224,33 @@ class AltOptTrainer:
                         target_modules=cfg.lora_target_modules or ["c_attn", "c_proj"],
                     )
                     self.lora_baseline = LoRABaseline(self.model, lora_cfg, lr=cfg.lr)
-                    self.optimizer = self.lora_baseline._optimizer
+                    self.optimizer = None  # AltOptFramework manages its own SGD optimizer
 
-                # For both PEFT and built-in paths, create AltOpt framework
-                # on the (now LoRA-wrapped) model.
-                # Note: ALS solver won't find nn.Linear modules in LoRA mode,
-                # so it gracefully skips. SGD+perturb alternation still applies.
-                schedule = cfg.phase_schedule or PhaseSchedule(
-                    phases=[
-                        PhaseConfig(phase=Phase.SGD, steps=100, lr=cfg.lr),
-                        PhaseConfig(phase=Phase.PERTURB, steps=1, noise_scale=1e-3),
-                    ],
-                    cycles=3,
-                )
+                # Build SGD+Perturb-only schedule.
+                # ALS is incompatible with LoRA — it targets full-rank nn.Linear
+                # (lm_head), using untrained LoRA activations and corrupting head
+                # weights → NaN/Inf divergence on 7B+ models.
+                if cfg.phase_schedule is not None:
+                    schedule = cfg.phase_schedule
+                    unfiltered = schedule.phases
+                    filtered_phases = [p for p in unfiltered if p.phase != Phase.ALS]
+                    if len(filtered_phases) != len(unfiltered):
+                        logger.info(
+                            "Protocol C: removed %d ALS phase(s) (ALS targets "
+                            "full-rank modules, incompatible with LoRA)",
+                            len(unfiltered) - len(filtered_phases),
+                        )
+                        schedule = PhaseSchedule(phases=filtered_phases, cycles=schedule.cycles)
+                else:
+                    schedule = PhaseSchedule(
+                        phases=[
+                            PhaseConfig(phase=Phase.SGD, steps=100, lr=cfg.lr),
+                            PhaseConfig(phase=Phase.PERTURB, steps=1, noise_scale=1e-3),
+                        ],
+                        cycles=3,
+                    )
                 self.altopt = AltOptFramework(self.model, schedule)
+                self.optimizer = self.altopt.sgd._optimizer
             else:
                 # Protocol D: LoRA + AdamW
                 lora_cfg = LoRAConfig(

@@ -118,6 +118,24 @@ class TestAltOptTrainer:
         trainer = AltOptTrainer(model, cfg, eval_dataloader=eval_data)
         assert trainer.lora_baseline is not None
 
+    def test_trainer_initializes_protocol_c_lora_altopt(self):
+        """Protocol C: LoRA + AltOpt — should have altopt framework, no ALS phase."""
+        model = TinyModel()
+        eval_data = make_eval_dataloader()
+        cfg = TrainerConfig(
+            protocol="C", optimizer_type="altopt", parameter_form="lora",
+            lora_r=2, lora_target_modules=["linear"],
+            max_steps=5, run_dir=tempfile.mkdtemp(),
+        )
+        trainer = AltOptTrainer(model, cfg, eval_dataloader=eval_data)
+        assert trainer.altopt is not None
+        # Verify schedule does NOT include ALS phase for LoRA
+        if trainer.altopt is not None:
+            phase_types = [pc.phase for pc in trainer.altopt.schedule.phases]
+            from altopt.framework import Phase
+            assert Phase.ALS not in phase_types, \
+                f"Protocol C should not use ALS phase, got {phase_types}"
+
     def test_train_loop_protocol_a(self):
         model = TinyModel()
         train_data = make_dataloader(n_samples=16)
