@@ -136,6 +136,30 @@ class TestAltOptTrainer:
             assert Phase.ALS not in phase_types, \
                 f"Protocol C should not use ALS phase, got {phase_types}"
 
+    def test_all_protocols_initialize(self):
+        """All 4 protocols (A, B, C, D) must initialize without error."""
+        protocols = [
+            ("A", "altopt", "full_rank"),
+            ("B", "adamw", "full_rank"),
+            ("C", "altopt", "lora"),
+            ("D", "adamw", "lora"),
+        ]
+        for proto, opt, param_form in protocols:
+            model = TinyModel()
+            eval_data = make_eval_dataloader()
+            cfg = TrainerConfig(
+                protocol=proto, optimizer_type=opt, parameter_form=param_form,
+                lora_r=2, lora_target_modules=["linear"],
+                max_steps=2, run_dir=tempfile.mkdtemp(), seed=42,
+            )
+            try:
+                trainer = AltOptTrainer(model, cfg, eval_dataloader=eval_data)
+                assert trainer.config.protocol == proto
+                assert trainer.config.optimizer_type == opt
+                assert trainer.config.parameter_form == param_form
+            except Exception as e:
+                pytest.fail(f"Protocol {proto} ({opt}/{param_form}) failed: {e}")
+
     def test_train_loop_protocol_a(self):
         model = TinyModel()
         train_data = make_dataloader(n_samples=16)
