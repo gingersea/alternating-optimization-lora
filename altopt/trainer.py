@@ -252,24 +252,50 @@ class AltOptTrainer:
                 self.altopt = AltOptFramework(self.model, schedule)
                 self.optimizer = self.altopt.sgd._optimizer
             else:
-                # Protocol D: LoRA + AdamW
-                lora_cfg = LoRAConfig(
-                    r=cfg.lora_r, alpha=cfg.lora_alpha, dropout=cfg.lora_dropout,
-                    target_modules=cfg.lora_target_modules or ["c_attn", "c_proj"],
-                )
-                self.lora_baseline = LoRABaseline(self.model, lora_cfg, lr=cfg.lr)
-                self.optimizer = getattr(self.lora_baseline, "_optimizer", None)
-                if self.optimizer is None:
-                    logger.warning(
-                        "LoRA: no adapters applied (no matching Linear modules in model). "
-                        "Falling back to full-rank AdamW."
-                    )
+                # Protocol D: LoRA + AdamW — prefer PEFT for correct device_map handling.
+                # LoRABaseline wraps layers in-place, breaking accelerate's device_map
+                # split and causing OOM on 7B+ models with device_map="auto".
+                peft_ok = False
+                try:
+                    from .peft_bridge import PeftBridge, model_supports_lora
                     from torch.optim import AdamW
-                    self.optimizer = AdamW(
-                        filter(lambda p: p.requires_grad, self.model.parameters()),
-                        lr=cfg.lr, betas=cfg.adamw_betas, weight_decay=cfg.weight_decay,
+
+                    if model_supports_lora(self.model):
+                        self.peft_bridge = PeftBridge(
+                            self.model,
+                            r=cfg.lora_r,
+                            alpha=cfg.lora_alpha,
+                            dropout=cfg.lora_dropout,
+                            target_modules=cfg.lora_target_modules,
+                        )
+                        self.model = self.peft_bridge.peft_model
+                        self.optimizer = AdamW(
+                            filter(lambda p: p.requires_grad, self.model.parameters()),
+                            lr=cfg.lr, betas=cfg.adamw_betas, weight_decay=cfg.weight_decay,
+                        )
+                        peft_ok = True
+                except (ImportError, ValueError, RuntimeError, AttributeError) as e:
+                    logger.info("PEFT unavailable for Protocol D: %s. "
+                                "Falling back to built-in LoRALayer.", e)
+
+                if not peft_ok:
+                    lora_cfg = LoRAConfig(
+                        r=cfg.lora_r, alpha=cfg.lora_alpha, dropout=cfg.lora_dropout,
+                        target_modules=cfg.lora_target_modules or ["c_attn", "c_proj"],
                     )
-                    self.lora_baseline = None
+                    self.lora_baseline = LoRABaseline(self.model, lora_cfg, lr=cfg.lr)
+                    self.optimizer = getattr(self.lora_baseline, "_optimizer", None)
+                    if self.optimizer is None:
+                        logger.warning(
+                            "LoRA: no adapters applied (no matching Linear modules in model). "
+                            "Falling back to full-rank AdamW."
+                        )
+                        from torch.optim import AdamW
+                        self.optimizer = AdamW(
+                            filter(lambda p: p.requires_grad, self.model.parameters()),
+                            lr=cfg.lr, betas=cfg.adamw_betas, weight_decay=cfg.weight_decay,
+                        )
+                        self.lora_baseline = None
             return
 
         # Full-rank protocols (A, B)
