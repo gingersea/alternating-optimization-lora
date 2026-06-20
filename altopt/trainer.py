@@ -310,8 +310,18 @@ class AltOptTrainer:
             self.altopt = AltOptFramework(self.model, schedule)
             self.optimizer = self.altopt.sgd._optimizer if self.altopt._sgd else None
         else:
-            from torch.optim import AdamW
-            self.optimizer = AdamW(
+            # 8-bit AdamW for full-rank 7B: reduces optimizer memory from
+            # 28GB to 3.5GB, enabling ZeRO-2 on 2×32GB GPUs (~31GB each).
+            try:
+                import bitsandbytes as bnb
+                self.optimizer = bnb.optim.AdamW8bit(
+                    filter(lambda p: p.requires_grad, self.model.parameters()),
+                    lr=cfg.lr, betas=cfg.adamw_betas, weight_decay=cfg.weight_decay,
+                )
+                logger.info("Using 8-bit AdamW (bitsandbytes) for full-rank optimizer")
+            except ImportError:
+                from torch.optim import AdamW
+                self.optimizer = AdamW(
                 filter(lambda p: p.requires_grad, self.model.parameters()),
                 lr=cfg.lr, betas=cfg.adamw_betas, weight_decay=cfg.weight_decay,
             )

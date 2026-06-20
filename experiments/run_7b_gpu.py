@@ -247,11 +247,11 @@ def main():
         logger.info(f"  GPU {i}: {props.name}, {props.total_memory/1e9:.1f}GB")
     logger.info("=" * 70)
 
-    # PHASE A: LoRA-only protocols (C, D) — single GPU, no DeepSpeed.
-    # PHASE B: Full-rank protocols (A, B) require DeepSpeed ZeRO-2 fix (pending).
+    # PHASE B: Protocol B only (AdamW+full-rank, DeepSpeed ZeRO-2).
+    # Protocol A skipped — Qwen2.5-7B has 28 layers (≥28 = divergence boundary).
+    # Full-rank 7B needs 8-bit AdamW + ZeRO-2 for ~35GB → fits 2×32GB.
     protocols = [
-        ("C", "altopt", "lora"),
-        ("D", "adamw", "lora"),
+        ("B", "adamw", "full_rank"),
     ]
 
     all_results = []
