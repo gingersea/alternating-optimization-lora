@@ -211,14 +211,15 @@ class ALSBlockSolver:
 
     def solve_block(
         self, batch: dict[str, torch.Tensor], block_size: int = 1024,
+        _lm_head_module: Optional[nn.Linear] = None,
     ) -> float:
         """
         Solve ALS block updates across linear layers with depth protection.
 
         Solves the output projection layer (lm_head/score) with label-based
-        targets, and eligible intermediate nn.Linear layers with
-        reconstruction-based targets.  Each layer update is EMA-damped by
-        depth position and norm-checked against catastrophic changes.
+        targets.  If _lm_head_module is provided (FSDP mode where
+        named_modules() is unreliable), uses it directly instead of
+        discovering via model traversal.
 
         Returns average ALS reconstruction loss.
         """
@@ -230,19 +231,23 @@ class ALSBlockSolver:
         total_loss = 0.0
         n_blocks_total = 0
 
-        # ALS is ONLY applied to lm_head (output projection layer).
-        # Intermediate layers have no ground-truth targets — reconstruction
-        # ALS is a moving-target problem (activations go stale after the
-        # first modified layer), producing hallucinated solutions with
-        # ‖ΔW‖/‖W‖ > 10⁶ on ≥28L models.
-        for name, module in self.model.named_modules():
-            is_head = ("lm_head" in name or "score" in name)
-            if isinstance(module, nn.Linear) and is_head:
-                loss, n_blocks = self._solve_head_layer(
-                    name, module, batch, labels, block_size,
-                )
-                total_loss += loss
-                n_blocks_total += n_blocks
+        # Pre-captured lm_head (FSDP mode)
+        if _lm_head_module is not None:
+            loss, n_blocks = self._solve_head_layer(
+                "lm_head", _lm_head_module, batch, labels, block_size,
+            )
+            total_loss += loss
+            n_blocks_total += n_blocks
+        else:
+            # Auto-discover via model traversal
+            for name, module in self.model.named_modules():
+                is_head = ("lm_head" in name or "score" in name)
+                if isinstance(module, nn.Linear) and is_head:
+                    loss, n_blocks = self._solve_head_layer(
+                        name, module, batch, labels, block_size,
+                    )
+                    total_loss += loss
+                    n_blocks_total += n_blocks
 
         if n_blocks_total > 0:
             logger.debug(

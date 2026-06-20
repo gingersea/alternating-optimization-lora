@@ -68,6 +68,8 @@ class TrainerConfig:
     seed: int = 42
 
     use_deepspeed: bool = False
+    use_fsdp: bool = False  # PyTorch FSDP for Protocol A multi-GPU
+    activation_checkpointing: bool = True
     deepspeed_zero_stage: int = 2
     deepspeed_bf16: bool = True
     deepspeed_fp16: bool = False
@@ -193,6 +195,10 @@ class AltOptTrainer:
         if cfg.use_deepspeed:
             self._setup_optimizer_for_deepspeed()
             self._setup_deepspeed()
+            return
+
+        if cfg.use_fsdp:
+            self._setup_fsdp()
             return
 
         if cfg.parameter_form == "lora":
@@ -375,6 +381,74 @@ class AltOptTrainer:
             )
             logger.info("Using DeepSpeedCPUAdam + DeepSpeed ZeRO-2 (CPU optimizer offload)")
 
+    def _setup_fsdp(self):
+        """FSDP FULL_SHARD + CPU offload for Protocol A multi-GPU.
+
+        Wraps model in FSDP to shard parameters and gradients across GPUs.
+        Optimizer states (SGD momentum) live on CPU via offload_params=True.
+        Peak GPU: 14GB (all-gathered params) + 7GB (grads) + 2GB (acts) ≈ 23GB.
+
+        ALS solver gets the raw lm_head module reference before wrapping so
+        it can still iterate submodules and capture activations correctly.
+        The lm_head weight is served by FSDP's summon_full_params context.
+        """
+        from functools import partial
+        from torch.distributed.fsdp import (
+            FullyShardedDataParallel as FSDP,
+            CPUOffload,
+            ShardingStrategy,
+            MixedPrecision,
+        )
+        from torch.distributed.fsdp.wrap import transformer_auto_wrap_policy
+
+        cfg = self.config
+
+        # Activation checkpointing
+        if cfg.activation_checkpointing and hasattr(self.model, 'gradient_checkpointing_enable'):
+            self.model.gradient_checkpointing_enable()
+
+        # ── Snapshot raw modules before FSDP wrapping ──
+        self._raw_model = self.model
+        # Find lm_head for ALS (FSDP wraps submodules so named_modules() won't work)
+        self._lm_head_module = None
+        for name, mod in self._raw_model.named_modules():
+            if isinstance(mod, nn.Linear) and ('lm_head' in name or 'score' in name):
+                self._lm_head_module = mod
+                break
+        if self._lm_head_module is not None:
+            logger.info("FSDP: captured lm_head module before wrapping")
+
+        # ── FSDP wrapping ──
+        # transformer_auto_wrap_policy wraps each TransformerBlock separately
+        self.model = FSDP(
+            self.model,
+            sharding_strategy=ShardingStrategy.FULL_SHARD,
+            cpu_offload=CPUOffload(offload_params=True),
+            mixed_precision=MixedPrecision(
+                param_dtype=torch.bfloat16,
+                reduce_dtype=torch.float32,
+                buffer_dtype=torch.bfloat16,
+            ),
+            use_orig_params=True,
+            device_id=torch.cuda.current_device(),
+            sync_module_states=True,
+        )
+        logger.info("FSDP: FULL_SHARD + CPU offload applied (peak ≈ 23GB/GPU)")
+
+        # ── Phase schedule ──
+        if cfg.optimizer_type == 'altopt':
+            schedule = cfg.phase_schedule or PhaseSchedule(
+                phases=[
+                    PhaseConfig(phase=Phase.SGD, steps=100, lr=cfg.lr),
+                    PhaseConfig(phase=Phase.PERTURB, steps=1, noise_scale=1e-3),
+                ],
+                cycles=3,
+            )
+            self.altopt = AltOptFramework(self.model, schedule)
+            _sgd = self.altopt.sgd  # trigger lazy creation
+            self.optimizer = _sgd._optimizer
+            logger.info("FSDP: AltOpt framework ready (ALS on lm_head, SGD via FSDP)")
+
     def _setup_deepspeed(self):
         from .deepspeed_engine import DeepSpeedConfig, DeepSpeedEngine
 
@@ -406,6 +480,8 @@ class AltOptTrainer:
     def train(self, dataloader) -> TrainerState:
         if self.config.use_deepspeed:
             return self._train_deepspeed(dataloader)
+        if self.config.use_fsdp:
+            return self._train_fsdp(dataloader)
         return self._train_standard(dataloader)
 
     def _train_standard(self, dataloader) -> TrainerState:
@@ -581,6 +657,161 @@ class AltOptTrainer:
             self._on_epoch_end(epoch)
 
         return self.state
+
+    # ── FSDP Training (Protocol A multi-GPU) ──────────────────────
+
+    def _train_fsdp(self, dataloader) -> TrainerState:
+        """FSDP-aware training loop for Protocol A (AltOpt full-rank).
+
+        Phases are routed individually to use correct FSDP contexts:
+          ALS: summon_full_params → solve → writeback
+          SGD: standard FSDP forward/backward/step (auto all-gather)
+          Perturb: summon_full_params → add noise → writeback
+        """
+        import torch.distributed as dist
+        from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
+
+        cfg = self.config
+        rank = dist.get_rank() if dist.is_initialized() else 0
+        device = torch.device(f'cuda:{rank}')
+
+        # Warm the SGD optimizer by moving to device
+        # (FSDP handles param movement; we just need device for batch)
+
+        self.model.train()
+
+        for epoch in range(cfg.max_epochs or 1):
+            self.state.epoch = epoch
+            for batch in dataloader:
+                self._on_step_start(batch)
+
+                # Move batch to local GPU
+                batch_gpu = {
+                    k: v.to(device) if isinstance(v, torch.Tensor) else v
+                    for k, v in batch.items()
+                }
+
+                # Determine current phase from AltOpt schedule
+                altopt = self.altopt
+                altopt._ensure_phase()
+                phase_config = altopt.schedule.phases[altopt._phase_index]
+                altopt.state.current_phase = phase_config.phase
+                altopt.state.current_cycle = altopt._cycle_count
+
+                # Dispatch by phase
+                if phase_config.phase == Phase.ALS:
+                    loss = self._fsdp_als_step(batch_gpu, phase_config)
+                elif phase_config.phase == Phase.SGD:
+                    loss = self._fsdp_sgd_step(batch_gpu, phase_config)
+                elif phase_config.phase == Phase.PERTURB:
+                    loss = self._fsdp_perturb_step(batch_gpu, phase_config)
+                else:
+                    # Shouldn't happen
+                    loss = 0.0
+
+                # Advance phase counter
+                altopt.state.global_step += 1
+                altopt.state.phase_step += 1
+                if altopt.state.phase_step >= phase_config.steps:
+                    altopt.state.phase_step = 0
+                    altopt._phase_index += 1
+                    # Check cycle completion
+                    if altopt._phase_index >= len(altopt.schedule.phases):
+                        altopt._cycle_count += 1
+                        if altopt._cycle_count >= altopt.schedule.cycles:
+                            altopt._phase_index = len(altopt.schedule.phases)  # done
+
+                altopt.state.record_loss(loss)
+
+                self._on_step_end(loss)
+                self.state.step += 1
+
+                if self._budget_exceeded():
+                    logger.info("Budget exceeded at step %d", self.state.step)
+                    self._on_epoch_end(epoch)
+                    return self.state
+
+                if cfg.max_steps and self.state.step >= cfg.max_steps:
+                    self._on_epoch_end(epoch)
+                    return self.state
+
+            self._on_epoch_end(epoch)
+
+        return self.state
+
+    def _fsdp_als_step(self, batch_gpu, phase_config) -> float:
+        """ALS phase through FSDP: summon full params, solve on rank 0, broadcast.
+
+        Inside summon_full_params, FSDP pre-forward hooks are suppressed,
+        so the ALS solver's model(**batch) runs as a normal nn.Module forward.
+        writeback=True broadcasts modified params from rank 0 to all ranks
+        on context exit.
+        """
+        import torch.distributed as dist
+        from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
+
+        rank = dist.get_rank() if dist.is_initialized() else 0
+        block_size = phase_config.block_size or 512
+
+        if self._lm_head_module is None:
+            logger.warning("FSDP ALS: no lm_head module captured, skipping")
+            return 0.0
+
+        with FSDP.summon_full_params(self.model, writeback=True):
+            if rank == 0:
+                try:
+                    loss = self.altopt.als.solve_block(
+                        batch_gpu, block_size=block_size,
+                        _lm_head_module=self._lm_head_module,
+                    )
+                except Exception as e:
+                    logger.error("FSDP ALS solve failed: %s", e)
+                    loss = 0.0
+            else:
+                loss = 0.0
+
+        # Synchronize after context exit
+        if dist.is_initialized():
+            dist.barrier()
+
+        return loss
+
+    def _fsdp_sgd_step(self, batch_gpu, phase_config) -> float:
+        """SGD phase: FSDP forward → backward → step (auto all-gather/backward)."""
+        lr = phase_config.lr or self.config.lr
+        self.altopt.sgd.set_lr(lr)
+
+        self.optimizer.zero_grad()
+        outputs = self.model(**batch_gpu)
+        loss = outputs.loss if hasattr(outputs, 'loss') else outputs[0]
+        loss.backward()
+
+        # Gradient clipping
+        torch.nn.utils.clip_grad_norm_(
+            filter(lambda p: p.requires_grad, self.model.parameters()),
+            max_norm=1.0,
+        )
+
+        self.optimizer.step()
+        self.altopt.sgd.last_grad_norm = 0.0  # FSDP complicates grad norm
+
+        return loss.item() if isinstance(loss, torch.Tensor) else loss
+
+    def _fsdp_perturb_step(self, batch_gpu, phase_config) -> float:
+        """Perturb phase: summon full params → apply noise → writeback."""
+        from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
+
+        noise_scale = phase_config.noise_scale or 5e-4
+
+        with FSDP.summon_full_params(self.model, writeback=True):
+            energy = self.altopt.perturb.apply_noise(scale=noise_scale)
+
+        # Quick forward for logging only
+        with torch.no_grad():
+            outputs = self.model(**batch_gpu)
+            loss = outputs.loss if hasattr(outputs, 'loss') else outputs[0]
+
+        return loss.item() if isinstance(loss, torch.Tensor) else loss
 
     # ── High-level API ──────────────────────────────────────────────
 

@@ -135,6 +135,22 @@ class AltOptFramework:
 
     # ── Main step ──────────────────────────────────────────────────
 
+    def _ensure_phase(self) -> None:
+        """Advance phase/cycle counters without executing a step.
+
+        Used by external training loops (e.g., FSDP) that manage
+        phase dispatch themselves but need AltOpt to track state.
+        """
+        if self._phase_index >= len(self.schedule.phases):
+            self._cycle_count += 1
+            if self._cycle_count >= self.schedule.cycles:
+                return  # all cycles done, no more phases
+            self._phase_index = 0
+
+        config = self.schedule.phases[self._phase_index]
+        self.state.current_phase = config.phase
+        self.state.current_cycle = self._cycle_count
+
     def step(self, batch: dict[str, torch.Tensor]) -> float:
         """
         Execute one step of the current phase.
