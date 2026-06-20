@@ -83,6 +83,9 @@ class DeepSpeedConfig:
     """Enable bf16 mixed precision (recommended for A100/H100/RTX 5090)."""
 
     # ── Gradient Management ──
+    train_micro_batch_size_per_gpu: int = 2
+    """Per-GPU micro batch size (must be integer, DeepSpeed 0.19+ rejects 'auto')."""
+
     gradient_accumulation_steps: int = 1
     """Accumulate gradients over N steps before optimizer step. Simulates larger batch."""
 
@@ -111,10 +114,12 @@ class DeepSpeedConfig:
     """Detailed timing breakdown for each training step."""
 
     def to_dict(self) -> dict:
-        """Convert to DeepSpeed JSON config dictionary."""
+        """Convert to DeepSpeed JSON config dictionary.
+
+        DeepSpeed 0.19+ does not accept 'auto' for batch sizes — must be integers.
+        """
         cfg: dict[str, Any] = {
-            "train_batch_size": "auto",
-            "train_micro_batch_size_per_gpu": "auto",
+            "train_micro_batch_size_per_gpu": self.train_micro_batch_size_per_gpu,
             "gradient_accumulation_steps": self.gradient_accumulation_steps,
             "gradient_clipping": self.gradient_clipping,
             "wall_clock_breakdown": self.wall_clock_breakdown,

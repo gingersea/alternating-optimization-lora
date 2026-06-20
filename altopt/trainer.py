@@ -322,9 +322,9 @@ class AltOptTrainer:
             except ImportError:
                 from torch.optim import AdamW
                 self.optimizer = AdamW(
-                filter(lambda p: p.requires_grad, self.model.parameters()),
-                lr=cfg.lr, betas=cfg.adamw_betas, weight_decay=cfg.weight_decay,
-            )
+                    filter(lambda p: p.requires_grad, self.model.parameters()),
+                    lr=cfg.lr, betas=cfg.adamw_betas, weight_decay=cfg.weight_decay,
+                )
 
     def _setup_deepspeed(self):
         from .deepspeed_engine import DeepSpeedConfig, DeepSpeedEngine
