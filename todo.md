@@ -1,83 +1,107 @@
-# alternating-optimization-lora 项目推进路线
+# Qwen2.5-7B 2×2 Factorial — Complete Work Plan
 
-## 当前基线 (Phase 2+3+4 完成)
-- 核心框架: AltOptFramework, LoRABaseline ✅
-- 基础设施: Trainer, Profiling, PEFT, Checkpoint, Evaluator ✅
-- 规模化: ModelLoader (7B+), DeepSpeed ZeRO-1/2/3 ✅
-- 消融: RQ1-RQ6 系统性消融实验框架 ✅
-- 可视化: 6 种图表类型, 一键生成 ✅
-- 文档: 3 份实验报告 + 数学框架文档 ✅
-- 测试: 67 tests passing ✅
+**Date**: 2026-06-20
+**Status**: Phase A (Protocol C+D) ✅ → Phase B (driver upgrade + Protocol B) ⏳
 
 ---
 
-## 计划执行清单
+## Phase A: Protocol C+D (LoRA) — ✅ DONE
 
-### Step 1: 端到端集成验证 (GPT-2 最小可行)
-**状态**: ✅ — 报告 #001
-
-### Step 2: 修复 Protocol B/C/D 集成路径
-**状态**: ✅ — 报告 #001
-
-### Step 3: 统一评分协议实战验证
-**状态**: ✅ — 报告 #001
-
-### Step 4: FLOPs 精确计数接入 (fvcore)
-**状态**: ✅ — 报告 #001
-
-### Step 5: 小规模对比实验 (GPT-2, 50 steps)
-**状态**: ✅ — 报告 #001
-
-### Step 6: 实验报告撰写 (报告 #001)
-**状态**: ✅
-
-### Step 7: Round 2 基础设施完善
-**状态**: ✅
-
-### Step 8: Round 3 GPT-2 Conv1D + 复现性
-**状态**: ✅ — 报告 #002
-
-### Step 9: Round 4 OPT-125m 干净 2×2 + ALS:SGD 消融
-**状态**: ✅ — 报告 #002
-
-### Step 10: Phase 2 — 规模化基础设施
-**状态**: ✅
-- model_utils.py: 7B+ 模型加载 (bf16/int4/gradient checkpointing)
-- deepspeed_engine.py: ZeRO-1/2/3 集成, 显存分析
-- llama2_7b.yaml: 7B 实验配置
-- trainer.py: DeepSpeed 训练循环
-
-### Step 11: Phase 3 — 消融实验框架
-**状态**: ✅
-- ablation.py: RQ2-RQ6 独立消融 + run_all_ablation()
-- analysis.py: RQ1 2×2 析因分析
-
-### Step 12: Phase 4 — 可视化工具包
-**状态**: ✅
-- visualization.py: 6 种图表 + generate_all_plots()
-
-### Step 13: 实验报告 #003
-**状态**: ✅
+- [x] Fix LoRALayer device alignment (ebaceda)
+- [x] Fix Protocol C ALS strip for LoRA (4bc3401)
+- [x] Fix LoRALayer dtype=bf16 (fe03e04)
+- [x] Fix Protocol D PeftBridge device_map (0b94782)
+- [x] Run Protocol C × 3 seeds × 800 steps — PPL 135.36 ± 11.1
+- [x] Run Protocol D × 3 seeds × 800 steps — PPL 10.41 ± 0.0
+- [x] Push results to GitHub
 
 ---
 
-## 后续规划
+## Phase B: Protocol B Full-Rank — ⏳ PENDING
 
-### Phase 5: 数据产出
-- [ ] 运行 ablation.py 产生消融数据 (`python experiments/ablation.py gpt2`)
-- [ ] 基于消融结果生成可视化图表
-- [ ] 下载 Llama-2-7B 模型
+### B1: Upgrade CUDA Driver
+- [ ] `sudo apt install nvidia-driver-595-open`
+- [ ] `sudo reboot`
+- [ ] Verify: `nvidia-smi` shows driver 595.x
+- [ ] Verify: GPU memory clean (2/18 MiB)
 
-### Phase 6: 7B 规模化实验
-- [ ] Llama-2-7B 2×2 析因 (DeepSpeed ZeRO-2)
-- [ ] 7B 规模 ALS:SGD 最优比验证
-- [ ] 与 GPT-2/OPT 结果的一致性分析
+### B2: Environment Verification
+- [ ] `torch.cuda.is_available() == True` on both GPUs
+- [ ] `torch.cuda.get_device_name(0)` = "NVIDIA GeForce RTX 5090"
+- [ ] `torch.cuda.get_device_name(1)` = "NVIDIA GeForce RTX 5090"
+- [ ] `import deepspeed` — no errors
+- [ ] `import bitsandbytes` — 8-bit AdamW available
+- [ ] DeepSpeed JIT compiles (ninja in PATH, nvcc available)
 
-### Phase 7: 扩展到更大规模
-- [ ] 13B/70B 模型支持 (ZeRO-3)
-- [ ] 多节点 / DeepSpeed 优化
-- [ ] 多数据集验证
+### B3: Restore Full-Rank Code Path
+- [ ] Restore DeepSpeed config in run_7b_gpu.py (use_deepspeed=True, deepspeed_zero_stage=2, model→CPU loading)
+- [ ] Restore communication_data_type safely (or keep removed)
+- [ ] protocols list = [("B", "adamw", "full_rank")]
+
+### B4: Protocol B Smoke Test
+- [ ] Run Protocol B seed 42 × 800 steps (DeepSpeed ZeRO-2 + 8-bit AdamW)
+- [ ] Verify: training runs without OOM
+- [ ] Verify: PPL values are reasonable (not NaN/Inf)
+- [ ] Verify: ~20 min per run wall time
+
+### B5: Protocol B Full Experiment
+- [ ] Run Protocol B × 3 seeds × 800 steps
+- [ ] Each seed in separate process (clean GPU)
+- [ ] Log output to /tmp/exp_b_final.log
+
+### B6: Merge Results
+- [ ] Combine Protocol B results into runs/qwen25_7b_800s/combined_results.json
+- [ ] Compute mean PPL ± std for Protocol B
+- [ ] 2×2 matrix: C=135.36, D=10.41, B=TBD, A=skipped (depth boundary)
+
+### B7: Final Analysis
+- [ ] AdamW full-rank vs LoRA comparison on 7B
+- [ ] Main effects and interaction from 2×2 (3/4 cells)
+- [ ] Consistency check with OPT-125m and GPT-2 results
+- [ ] Write summary to docs/phase_b_results.md
 
 ---
 
-*Last updated: 2026-06-10*
+## 2×2 Factorial Matrix (Qwen2.5-7B @ 800 steps)
+
+| | AltOpt (ASP) | AdamW |
+|---|---|---|
+| **LoRA** | C: 135.36 ± 11.1 ✅ | D: 10.41 ± 0.0 ✅ |
+| **Full-rank** | A: skipped (depth boundary) | B: TBD ⏳ |
+
+---
+
+## Key Commands (Post-Reboot)
+
+```bash
+# Verify driver
+nvidia-smi --query-gpu=index,driver_version,name,memory.total --format=csv,noheader
+
+# Verify PyTorch
+cd /home/room115/alternating-optimization-lora
+.venv/bin/python -c "
+import torch; import deepspeed; import bitsandbytes
+print(f'torch {torch.__version__}, CUDA {torch.cuda.is_available()}')
+print(f'GPUs: {torch.cuda.device_count()}')
+for i in range(torch.cuda.device_count()):
+    print(f'  GPU {i}: {torch.cuda.get_device_name(i)}')
+print('deepspeed OK, bitsandbytes OK')
+"
+
+# Protocol B smoke test
+CUDA_VISIBLE_DEVICES=0,1 bash -c '
+export HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 PYTHONUNBUFFERED=1
+export PYTHONPYCACHEPREFIX=/tmp/pyc_b_final
+cd /home/room115/alternating-optimization-lora
+.venv/bin/python -u -c "
+from experiments.run_7b_gpu import run_protocol
+r = run_protocol(\"B\", \"adamw\", \"full_rank\", 42, 800)
+print(\"OK\" if r.get(\"status\")==\"success\" else f\"FAIL: {r.get(\"error\",\"\")[:200]}\")
+printf(\"ppl={r.get(\"perplexity\",float(\"nan\")):.2f}\" if r.get(\"status\")==\"success\" else \"\")
+" 2>&1 | tee /tmp/exp_b_final.log
+'
+```
+
+---
+
+*Last updated: 2026-06-20*
