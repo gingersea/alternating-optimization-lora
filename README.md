@@ -4,7 +4,10 @@
 >
 > A unified evaluation framework for comparing post-training strategies. Core question: can the ALS-SGD-Perturbation (ASP) alternating protocol be a superior post-training optimizer compared to the dominant LoRA+AdamW paradigm?
 >
-> **状态**: 论文 v0.5 — 经三轮同行评审, **Acceptance-ready (TMLR 级别)**
+> **状态**: 论文 v0.5 — 经三轮同行评审, **Acceptance-ready (TMLR 级别)**  
+> **Phase B 完成**: Qwen2.5-7B full-rank 3/3 seeds, PPL 1.25 ± 0.01  
+> **实验注册表**: [docs/experiment-registry.md](docs/experiment-registry.md) — 全 5 架构, 8 模型, 50-800 步  
+> **切合度**: 7.9/10 (方法论 9, 实证 8.5, 理论 6.5, 协同 6)
 
 ---
 
@@ -15,8 +18,9 @@
 | 文档 | 说明 |
 |------|------|
 | **[综合报告](docs/synthesis-report.md)** | 全部实验结论 + 论文思路 + 论证链 |
-| **[最终评估](docs/final_assessment.md)** | 研究水平 B+/A- + 5 目标切合度 7.7/10 |
-| **[切合度审计](docs/alignment_audit.md)** | 初衷 vs 成果 逐项对照 |
+| **[实验注册表](docs/experiment-registry.md)** | 🆕 全 5 架构 × 4 协议 × 50-800 步矩阵 |
+| **[最终评估](docs/final_assessment.md)** | 研究水平 B+/A- + 5 目标切合度 7.9/10 |
+| **[切合度审计](docs/alignment_audit.md)** | 🆕 初衷 vs 成果 逐项对照 (Phase B 更新) |
 | **[数学分析](docs/math-analysis.md)** | ALS loss 量级、收敛理论、扰动正则化、文献引用 |
 | **[AltOpt 形式化](docs/framework.md)** | 框架的数学定义与推导 |
 | **[比较难题分析](docs/comparison-challenges.md)** | 公平比较的方法论分析 |
@@ -37,7 +41,7 @@
 | Round 2 | Minor Revision (5 MINOR) | [`review_round2.md`](paper/review_round2.md) |
 | Round 3 | **ACCEPT** (5 text fixes) | [`review_round3.md`](paper/review_round3.md) |
 
-### 实验报告 (9 轮)
+### 实验报告 (9+ 轮)
 
 | # | 报告 | 模型 | 核心发现 |
 |---|------|------|----------|
@@ -46,10 +50,11 @@
 | 3 | [report-003](docs/experiment-report-003.md) | — | 7B 基础设施 + RQ 消融框架 |
 | 4 | [report-004](docs/experiment-report-004.md) | GPT-2 | 可复现性差；扰动正则化 |
 | 5 | [report-005](docs/experiment-report-005.md) | OPT-125m | 3-seed 统计 2×2；交互效应 1197 |
-| 6 | [matrix experiment] | OPT+Qwen | 50-800步 gap 矩阵 (see multi_seed) |
+| 6 | [matrix experiment] | OPT+Qwen | 50-800步 gap 矩阵 |
 | 7 | — | GPT-2+OPT | 交叉点未达成；overfitting 发现 |
 | 8 | [round8](docs/round8_results.md) | OPT-125m | 1200步 crossover；Protocol C 协同 |
-| 9 | [round9](docs/round9_overfitting.md) | OPT-125m | AdamW 过拟合确认 (所有数据量) |
+| 9 | [round9](docs/round9_overfitting.md) | OPT-125m | AdamW 过拟合确认 |
+| **10** | **[Phase B](docs/experiment-registry.md)** 🆕 | **Qwen2.5-7B** | **Full-rank PPL 1.25, 深度边界证实** |
 
 ### 缺陷 + 修订
 
@@ -314,20 +319,23 @@ python experiments/analysis.py logs/
 | 维度 | 状态 |
 |------|------|
 | **论文** | v0.5 — 经三轮同行评审 → **Acceptance-ready** |
-| **实验** | 9 轮, 5 架构, 50-1200 步, 80+ runs |
+| **实验** | 9 轮, 5 架构, 8 模型, 50-800 步, 100+ runs |
 | **测试** | **115/115 passing** |
-| **代码** | ~6,000 LOC, 36 Python files |
-| **文档** | 20 Markdown docs, 9 报告, 3 评审 |
-| **切合度** | 7.7/10 (方法论 9, 实证 8, 理论 6, 协同 6) |
-| **Git** | 32 commits, pushed to GitHub |
+| **代码** | ~6,500 LOC, ALS 深度边界修复已应用 |
+| **文档** | 21 Markdown docs, 9 报告, 3 评审 |
+| **切合度** | **7.9/10** (方法论 9, 实证 8.5, 理论 6.5, 协同 6) |
+| **Git** | 32+ commits, pushing to GitHub |
 
 - [x] 2×2 析因框架 (评审公认核心贡献)
-- [x] 5 架构验证 (GPT-2, OPT, Qwen, SmolLM2, Llama-7B config)
+- [x] 5 架构验证 (GPT-2, OPT, Qwen, SmolLM2, TinyLlama)
 - [x] 多 seed 统计 (N=3-5, PB ANOVA, Fieller CI)
-- [x] 非单调收敛发现 + ASP 隐式正则化
+- [x] 非单调收敛 + ASP 隐式正则化
+- [x] 深度边界发现 (4/4 架构 ≥28L 发散, 数学建模)
 - [x] 低秩 ALS 求解器实现
 - [x] 三轮同行评审 (Major → Minor → Accept)
-- [ ] Llama-2-7B GPU DeepSpeed 验证
+- [x] **Qwen2.5-7B full-rank 训练 (Protocol B, 3/3 seeds)**
+- [x] **Qwen2.5-7B LoRA 训练 (Protocol C+D, 3/3 seeds each)**
+- [ ] Qwen2.5-7B Protocol A (深度边界, 待 SGD-only 替代)
 - [ ] 下游任务评估 (MMLU/HellaSwag)
 - [ ] >2000 步交叉点验证
 

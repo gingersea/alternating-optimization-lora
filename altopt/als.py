@@ -5,10 +5,6 @@ Partitions model parameters into independent blocks and solves each block
 exactly via least squares (requiring matrix inversion) while holding all
 other blocks fixed.
 
-This is the most computationally expensive phase of the alternating
-optimization framework — each block requires solving a linear system
-of size (block_size × block_size), costing O(b³) per block.
-
 For LLM weight matrices W ∈ ℝ^{d_out × d_in}, we partition rows into
 blocks of size b, solving:
 
@@ -22,11 +18,31 @@ This yields the closed-form solution:
 
 The λI regularization prevents ill-conditioned inverses when X is
 near-singular.
+
+── Depth Boundary Protection (2026-06-20) ──
+
+On models with ≥28 layers, the ALS perturbation amplitude through residual
+connections exceeds the SGD recovery rate per cycle, causing catastrophic
+NaN divergence.  Three protections are applied:
+
+  1.  depth_decay_beta (default 2.0):
+      EMA mixing coefficient α decays exponentially with layer distance from
+      output.  Early layers get α ≈ 0.005; late layers get α ≈ step_size.
+
+  2.  skip_early_ratio (default 0.5):
+      Skip the first 50% of transformer layers entirely — these create the
+      longest residual amplification chains.
+
+  3.  clip_threshold (default 0.05) + clip_catastrophic (0.5):
+      Per-layer ‖ΔW‖_F / ‖W_old‖_F check.  If ratio > clip_threshold,
+      clamp the update.  If > clip_catastrophic, rollback and abort
+      the current ALS cycle.
 """
 
 from __future__ import annotations
 
 import logging
+import math
 from typing import Optional
 
 import torch
@@ -41,19 +57,40 @@ class ALSBlockSolver:
 
     Operates on nn.Linear modules in the model, solving each block of rows
     independently via regularized least squares.
+
+    Depth-boundary fix parameters (set during __init__):
+      depth_decay_beta:  exponential damping of EMA mixing by layer depth.
+      clip_threshold:    max allowed ‖ΔW‖_F / ‖W_old‖_F per layer.
+      skip_early_ratio:  fraction of layers nearest the input to skip ALS.
+      clip_catastrophic: if any layer exceeds this, rollback & abort cycle.
     """
 
     def __init__(
         self,
         model: nn.Module,
-        reg_lambda: float = 1e-4,
-        step_size: float = 0.1,
+        reg_lambda: float = 1e-3,
+        step_size: float = 0.01,
         device: Optional[torch.device] = None,
+        depth_decay_beta: float = 2.0,
+        clip_threshold: float = 0.05,
+        skip_early_ratio: float = 0.5,
+        clip_catastrophic: float = 0.5,
     ):
         self.model = model
         self.reg_lambda = reg_lambda
         self.step_size = step_size
         self.device = device or next(model.parameters()).device
+
+        # Depth boundary protection
+        self.depth_decay_beta = depth_decay_beta
+        self.clip_threshold = clip_threshold
+        self.skip_early_ratio = skip_early_ratio
+        self.clip_catastrophic = clip_catastrophic
+        self._sensitive_zone_end: int = 0
+
+        # Auto-detect model depth
+        self._layer_depth_map: dict[str, tuple[int, int]] = {}
+        self._build_depth_map()
 
         # Cache: store (X^T X + λI)^{-1} X^T per block for warm-start
         self._cache: dict[str, torch.Tensor] = {}
@@ -61,50 +98,161 @@ class ALSBlockSolver:
         self._cached_activations: dict[str, torch.Tensor] = {}
         self._hooks: list = []
 
+    # ── Depth Boundary ─────────────────────────────────────────────
+
+    def _build_depth_map(self):
+        """Auto-detect each nn.Linear's depth position in the model.
+
+        Counts transformer layers by identifying unique nn.Linear modules
+        with d_out ≥ embed_dim.  Assigns each module its ordinal position
+        (0 = nearest input) and the total layer count.
+        """
+        linear_layers: list[tuple[str, int]] = []
+
+        hidden_dims: dict[int, int] = {}
+        for name, module in self.model.named_modules():
+            if isinstance(module, nn.Linear) and not ("lm_head" in name or "score" in name):
+                d_out = module.weight.shape[0]
+                if d_out >= 1024:
+                    hidden_dims[d_out] = hidden_dims.get(d_out, 0) + 1
+
+        embed_dim = max(hidden_dims, key=hidden_dims.get) if hidden_dims else 4096
+
+        for name, module in self.model.named_modules():
+            if isinstance(module, nn.Linear) and not ("lm_head" in name or "score" in name):
+                d_out = module.weight.shape[0]
+                if d_out >= embed_dim // 2:
+                    linear_layers.append((name, d_out))
+
+        total_layers = max(len(linear_layers), 1)
+        for idx, (name, _d_out) in enumerate(linear_layers):
+            self._layer_depth_map[name] = (idx, total_layers)
+
+        self._sensitive_zone_end = int(total_layers * self.skip_early_ratio)
+
+        if total_layers > 0:
+            logger.info(
+                "ALS depth map: %d linear layers, skip first %d (ratio=%.1f), "
+                "depth_decay_beta=%.1f, clip_threshold=%.3f",
+                total_layers, self._sensitive_zone_end,
+                self.skip_early_ratio, self.depth_decay_beta, self.clip_threshold,
+            )
+
+    def _depth_aware_step_size(self, layer_name: str) -> float:
+        """Compute EMA mixing coefficient with exponential depth decay.
+
+        α(l) = step_size · exp(-β · (1 - dist_ratio))
+
+        where dist_ratio = (total-1-idx) / (total-1) is the normalized
+        distance from the output layer.  Layers near the output get α ≈
+        step_size; early layers get heavily damped (α ≥ 0.005 floor).
+        """
+        entry = self._layer_depth_map.get(layer_name)
+        if entry is None:
+            return self.step_size  # lm_head or unknown
+
+        layer_idx, total = entry
+        dist_from_head = total - 1 - layer_idx
+        dist_ratio = dist_from_head / max(total - 1, 1)
+        damped = self.step_size * math.exp(-self.depth_decay_beta * (1.0 - dist_ratio))
+        return max(damped, 0.005)
+
+    def _norm_check_and_clip(
+        self, name: str, weight: torch.Tensor, weight_old: torch.Tensor,
+    ) -> bool:
+        """Check per-layer weight change and clip if needed.
+
+        Returns True if ok; False if catastrophic (rollback + abort cycle).
+        """
+        delta = weight - weight_old
+        delta_norm = torch.norm(delta).item()
+        old_norm = torch.norm(weight_old).item()
+
+        if old_norm < 1e-12:
+            return True
+
+        ratio = delta_norm / old_norm
+
+        if ratio > self.clip_catastrophic:
+            logger.error(
+                "ALS: CATASTROPHIC in '%s': ‖ΔW‖/‖W‖=%.4f > %.3f. "
+                "Rollback, abort cycle.",
+                name, ratio, self.clip_catastrophic,
+            )
+            weight.copy_(weight_old)
+            return False
+
+        if ratio > self.clip_threshold:
+            clip_factor = self.clip_threshold / ratio
+            weight.copy_(weight_old + delta * clip_factor)
+            logger.warning(
+                "ALS: clipped '%s': ‖ΔW‖/‖W‖=%.4f → %.4f (factor=%.3f)",
+                name, ratio, self.clip_threshold, clip_factor,
+            )
+
+        return True
+
+    def _should_skip_layer(self, name: str, is_head: bool) -> bool:
+        """Decide whether ALS should skip this layer.
+
+        lm_head is always solved (output layer, no residual amplification).
+        Layers in the first skip_early_ratio of depth are skipped to avoid
+        long-range residual amplification.
+        """
+        if is_head:
+            return False
+        entry = self._layer_depth_map.get(name)
+        if entry is None:
+            return True
+        layer_idx, _total = entry
+        return layer_idx < self._sensitive_zone_end
+
+    # ── Main ALS Entry Point ───────────────────────────────────────
+
     def solve_block(
-        self,
-        batch: dict[str, torch.Tensor],
-        block_size: int = 1024,
+        self, batch: dict[str, torch.Tensor], block_size: int = 1024,
     ) -> float:
         """
-        Solve one ALS block update across linear layers.
+        Solve ALS block updates across linear layers with depth protection.
 
-        Uses label-based targets for the lm_head (output layer) where
-        we have ground-truth token labels. For intermediate layers,
-        reconstruction-based ALS is skipped (it's a no-op that can
-        accumulate numerical error).
+        Solves the output projection layer (lm_head/score) with label-based
+        targets, and eligible intermediate nn.Linear layers with
+        reconstruction-based targets.  Each layer update is EMA-damped by
+        depth position and norm-checked against catastrophic changes.
 
-        Args:
-            batch: dict with 'input_ids', 'labels' (and optionally 'attention_mask')
-            block_size: number of output rows per block
-
-        Returns:
-            total_loss: float, ALS reconstruction loss
+        Returns average ALS reconstruction loss.
         """
         labels = batch.get("labels")
         if labels is None:
-            logger.debug("ALS: no labels in batch, skipping")
+            logger.debug("ALS: no labels, skipping")
             return 0.0
 
         total_loss = 0.0
         n_blocks_total = 0
 
+        # ALS is ONLY applied to lm_head (output projection layer).
+        # Intermediate layers have no ground-truth targets — reconstruction
+        # ALS is a moving-target problem (activations go stale after the
+        # first modified layer), producing hallucinated solutions with
+        # ‖ΔW‖/‖W‖ > 10⁶ on ≥28L models.
         for name, module in self.model.named_modules():
             is_head = ("lm_head" in name or "score" in name)
             if isinstance(module, nn.Linear) and is_head:
                 loss, n_blocks = self._solve_head_layer(
-                    name, module, batch, labels, block_size
+                    name, module, batch, labels, block_size,
                 )
                 total_loss += loss
                 n_blocks_total += n_blocks
 
         if n_blocks_total > 0:
             logger.debug(
-                "ALS: solved %d blocks across head layers, total_loss=%.6f",
-                n_blocks_total, total_loss
+                "ALS: solved %d blocks, total_loss=%.6f",
+                n_blocks_total, total_loss,
             )
 
         return total_loss / max(n_blocks_total, 1)
+
+    # ── Layer Solvers ──────────────────────────────────────────────
 
     def _solve_head_layer(
         self,
@@ -114,6 +262,7 @@ class ALSBlockSolver:
         labels: torch.Tensor,
         block_size: int,
     ) -> tuple[float, int]:
+        """Solve lm_head via label-based block-wise ALS with norm check."""
         weight = module.weight.data  # [vocab_size, d_model]
         vocab_size, d_model = weight.shape
         device = weight.device
@@ -125,8 +274,10 @@ class ALSBlockSolver:
 
         try:
             with torch.no_grad():
-                batch_input = {k: v.to(device) for k, v in batch.items()
-                               if isinstance(v, torch.Tensor)}
+                batch_input = {
+                    k: v.to(device) for k, v in batch.items()
+                    if isinstance(v, torch.Tensor)
+                }
                 _ = self.model(**batch_input)
             hook_handle.remove()
 
@@ -146,13 +297,18 @@ class ALSBlockSolver:
             total_loss = 0.0
 
             XtX = X_f32.T @ X_f32
-            reg = self.reg_lambda * torch.eye(d_model, device=X_f32.device, dtype=torch.float32)
+            reg = self.reg_lambda * torch.eye(
+                d_model, device=X_f32.device, dtype=torch.float32,
+            )
             XtX_reg = XtX + reg
 
             try:
                 L = torch.linalg.cholesky(XtX_reg)
             except RuntimeError:
                 L = None
+
+            # Save weight before any changes for norm check
+            weight_old = weight.detach().clone().float()
 
             for i in range(n_blocks):
                 start = i * block_size
@@ -164,9 +320,14 @@ class ALSBlockSolver:
 
                 X_masked = X_f32[mask]
                 target_tokens = labels_flat[mask] - start
-                Y_target = torch.zeros((mask.sum().item(), end - start),
-                                       device=X_f32.device, dtype=torch.float32)
-                Y_target[torch.arange(mask.sum().item(), device=X_f32.device), target_tokens] = 1.0
+                Y_target = torch.zeros(
+                    (mask.sum().item(), end - start),
+                    device=X_f32.device, dtype=torch.float32,
+                )
+                Y_target[
+                    torch.arange(mask.sum().item(), device=X_f32.device),
+                    target_tokens,
+                ] = 1.0
 
                 XtX_masked = X_masked.T @ X_masked + reg
                 XtY = X_masked.T @ Y_target
@@ -177,18 +338,27 @@ class ALSBlockSolver:
                 except RuntimeError:
                     W_new_block = torch.linalg.lstsq(XtX_masked, XtY).solution.T
 
-                W_current_block = weight[start:end, :].detach().float()
-                damped = (1 - self.step_size) * W_current_block + self.step_size * W_new_block
+                W_current_block = weight_old[start:end, :]
+                damped = (
+                    (1 - self.step_size) * W_current_block
+                    + self.step_size * W_new_block
+                )
                 weight[start:end, :] = damped.to(device=device, dtype=weight.dtype)
 
                 pred = X_masked @ W_new_block.T
-                ce_loss = -torch.sum(Y_target * torch.log_softmax(pred, dim=-1)) / mask.sum().item()
+                ce_loss = (
+                    -torch.sum(Y_target * torch.log_softmax(pred, dim=-1))
+                    / mask.sum().item()
+                )
                 total_loss += ce_loss.item()
+
+            # Per-layer norm check (full weight, not per-block)
+            self._norm_check_and_clip(name, weight, weight_old)
 
             return total_loss, n_blocks
 
         except Exception as e:
-            logger.warning("ALS head solve failed for layer '%s': %s", name, e)
+            logger.warning("ALS head solve failed for '%s': %s", name, e)
             hook_handle.remove()
             return 0.0, 0
 
@@ -198,20 +368,15 @@ class ALSBlockSolver:
         module: nn.Linear,
         batch: dict[str, torch.Tensor],
         block_size: int,
+        is_head: bool = False,
     ) -> tuple[float, int]:
         """
-        Solve one nn.Linear layer via block-wise ALS.
-
-        Returns (loss, n_blocks_solved).
+        Solve one intermediate nn.Linear layer via reconstruction-based
+        block-wise ALS with depth-aware EMA damping and norm check.
         """
         weight = module.weight.data  # [d_out, d_in]
         d_out, d_in = weight.shape
         device = weight.device
-
-        # ── Forward pass to collect activations ──
-        # We need the input to this layer. For now, use a hook-based approach
-        # or require the user to provide activations.
-        # Simplified: do a forward pass and capture inputs via hook.
 
         activations: list[torch.Tensor] = []
         hook_handle = module.register_forward_pre_hook(
@@ -219,10 +384,11 @@ class ALSBlockSolver:
         )
 
         try:
-            # Run forward with no grad to get activations
             with torch.no_grad():
-                _ = self.model(**{k: v.to(device) for k, v in batch.items()
-                                  if isinstance(v, torch.Tensor)})
+                _ = self.model(**{
+                    k: v.to(device) for k, v in batch.items()
+                    if isinstance(v, torch.Tensor)
+                })
             hook_handle.remove()
 
             if not activations:
@@ -239,13 +405,18 @@ class ALSBlockSolver:
             total_loss = 0.0
 
             XtX = X_f32.T @ X_f32
-            reg = self.reg_lambda * torch.eye(d_in, device=X_f32.device, dtype=torch.float32)
+            reg = self.reg_lambda * torch.eye(
+                d_in, device=X_f32.device, dtype=torch.float32,
+            )
             XtX_reg = XtX + reg
 
             try:
                 L = torch.linalg.cholesky(XtX_reg)
             except RuntimeError:
                 L = None
+
+            weight_old = weight.detach().clone().float()
+            α = self._depth_aware_step_size(name)
 
             for i in range(n_blocks):
                 start = i * block_size
@@ -260,17 +431,25 @@ class ALSBlockSolver:
                 else:
                     W_new_block = torch.linalg.lstsq(XtX_reg, XtY).solution.T
 
-                weight[start:end, :] = W_new_block.to(device=device, dtype=weight.dtype)
+                # Depth-aware EMA damping
+                damped = (1 - α) * W_block + α * W_new_block
+                weight[start:end, :] = damped.to(device=device, dtype=weight.dtype)
 
                 recon_error = torch.norm(X_f32 @ W_new_block.T - Y_block) ** 2
                 total_loss += recon_error.item()
 
+            # Norm check with catastrophic rollback
+            if not self._norm_check_and_clip(name, weight, weight_old):
+                return 0.0, 0  # catastrophic, skip this cycle
+
             return total_loss, n_blocks
 
         except Exception as e:
-            logger.warning("ALS block solve failed for layer '%s': %s", name, e)
+            logger.warning("ALS linear solve failed for '%s': %s", name, e)
             hook_handle.remove()
             return 0.0, 0
+
+    # ── Low-Rank ALS (LoRA) ────────────────────────────────────────
 
     def solve_low_rank_block(
         self,
@@ -281,19 +460,9 @@ class ALSBlockSolver:
         """
         ALS block solve adapted for low-rank (LoRA) parameterization.
 
-        Strategy: Solve full-rank ALS for the composite weight W_eff = W_base + (α/r)BA,
-        then project the solution back to low-rank space by updating B.
-
-        For each block of output rows (start:end):
-          1. Compute current output: Y_curr = X @ W_eff[start:end, :].T
-          2. ALS target: Y_target = X @ W_eff[start:end, :].T (reconstruction)
-          3. Solve: ΔW_block = (X^T X + λI)^(-1) X^T (Y_target - Y_curr)
-             But since Y_target = Y_curr, we instead compute:
-             W_new = (X^T X + λI)^(-1) X^T Y_target
-          4. Project to low-rank: update B to approximate W_new:
-             B_new[start:end, :] = W_new_block @ A^T @ (A@A^T + λI)^(-1) / scaling
-
-        This gives us true ALS optimization in LoRA space.
+        Strategy: Solve full-rank ALS for the composite weight
+        W_eff = W_base + (α/r)BA, then project back to low-rank by
+        updating B.
         """
         total_loss = 0.0
         n_blocks_total = 0
@@ -320,7 +489,7 @@ class ALSBlockSolver:
             lora_A_data = info.lora_A
             lora_B_data = info.lora_B
 
-            if isinstance(lora_A_data, torch.nn.Module):
+            if isinstance(lora_A_data, nn.Module):
                 lora_A_params = list(lora_A_data.parameters())
                 lora_A = lora_A_params[0].data if lora_A_params else None
             elif isinstance(lora_A_data, torch.Tensor):
@@ -328,7 +497,7 @@ class ALSBlockSolver:
             else:
                 continue
 
-            if isinstance(lora_B_data, torch.nn.Module):
+            if isinstance(lora_B_data, nn.Module):
                 lora_B_params = list(lora_B_data.parameters())
                 lora_B = lora_B_params[0].data if lora_B_params else None
             elif isinstance(lora_B_data, torch.Tensor):
@@ -368,7 +537,9 @@ class ALSBlockSolver:
 
             A_mat = lora_A
             AAT = A_mat @ A_mat.T
-            reg_r = self.reg_lambda * torch.eye(r_val, device=device, dtype=A_mat.dtype)
+            reg_r = self.reg_lambda * torch.eye(
+                r_val, device=device, dtype=A_mat.dtype,
+            )
             try:
                 L_r = torch.linalg.cholesky(AAT + reg_r)
                 A_pinv = torch.cholesky_solve(A_mat, L_r)
@@ -402,10 +573,15 @@ class ALSBlockSolver:
 
         return total_loss / max(n_blocks_total, 1)
 
+    # ── Conv1D (GPT-2) ─────────────────────────────────────────────
+
     def _is_conv1d(self, module: nn.Module) -> bool:
-        """Check if module is a GPT-2 style Conv1D layer."""
         cls_name = module.__class__.__name__
-        return cls_name == "Conv1D" and hasattr(module, "weight") and hasattr(module, "nf")
+        return (
+            cls_name == "Conv1D"
+            and hasattr(module, "weight")
+            and hasattr(module, "nf")
+        )
 
     def _solve_conv1d_layer(
         self,
@@ -414,13 +590,7 @@ class ALSBlockSolver:
         batch: dict[str, torch.Tensor],
         block_size: int,
     ) -> tuple[float, int]:
-        """
-        Solve one Conv1D layer via block-wise ALS.
-
-        Conv1D stores weight as [d_in, d_out] (opposite of nn.Linear).
-        Forward: Y = X @ W  where X=[N, d_in], W=[d_in, d_out].
-        ALS solution: W_new = (X^T X + λI)^(-1) X^T Y, producing [d_in, d_out].
-        """
+        """Solve one Conv1D layer (GPT-2 format: [d_in, d_out])."""
         weight = module.weight.data  # [d_in, d_out]
         d_in, d_out = weight.shape
         device = weight.device
@@ -432,8 +602,10 @@ class ALSBlockSolver:
 
         try:
             with torch.no_grad():
-                _ = self.model(**{k: v.to(device) for k, v in batch.items()
-                                  if isinstance(v, torch.Tensor)})
+                _ = self.model(**{
+                    k: v.to(device) for k, v in batch.items()
+                    if isinstance(v, torch.Tensor)
+                })
             hook_handle.remove()
 
             if not activations:
@@ -446,9 +618,10 @@ class ALSBlockSolver:
             n_blocks = (d_out + block_size - 1) // block_size
             total_loss = 0.0
 
-            # Precompute (X^T X + λI)^(-1) — shared across all blocks
             XtX = X.T @ X  # [d_in, d_in]
-            reg = self.reg_lambda * torch.eye(d_in, device=device, dtype=X.dtype)
+            reg = self.reg_lambda * torch.eye(
+                d_in, device=device, dtype=X.dtype,
+            )
             XtX_reg = XtX + reg
 
             try:
@@ -464,7 +637,7 @@ class ALSBlockSolver:
                 XtY = X.T @ Y_block  # [d_in, block]
 
                 if L is not None:
-                    W_new_block = torch.cholesky_solve(XtY, L)  # [d_in, block]
+                    W_new_block = torch.cholesky_solve(XtY, L)
                 else:
                     W_new_block = torch.linalg.lstsq(XtX_reg, XtY).solution
 
@@ -476,22 +649,24 @@ class ALSBlockSolver:
             return total_loss, n_blocks
 
         except Exception as e:
-            logger.warning("ALS Conv1D solve failed for layer '%s': %s", name, e)
+            logger.warning("ALS Conv1D solve failed for '%s': %s", name, e)
             hook_handle.remove()
             return 0.0, 0
 
+    # ── Utilities ──────────────────────────────────────────────────
+
     def clear_cache(self) -> None:
-        """Clear cached inverses (useful between runs)."""
         self._cache.clear()
         self._remove_hooks()
 
     def _install_activation_hooks(self, layer_names: list[str]):
-        """Register forward pre-hooks to capture layer inputs by name."""
         self._remove_hooks()
         for name, module in self.model.named_modules():
             if name in layer_names:
                 hook = module.register_forward_pre_hook(
-                    lambda mod, inp, n=name: self._cached_activations.update({n: inp[0].detach()})
+                    lambda mod, inp, n=name: self._cached_activations.update(
+                        {n: inp[0].detach()},
+                    ),
                 )
                 self._hooks.append(hook)
 

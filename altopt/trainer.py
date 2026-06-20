@@ -191,6 +191,7 @@ class AltOptTrainer:
         torch.manual_seed(cfg.seed)
 
         if cfg.use_deepspeed:
+            self._setup_optimizer_for_deepspeed()
             self._setup_deepspeed()
             return
 
@@ -308,7 +309,8 @@ class AltOptTrainer:
                 cycles=3,
             )
             self.altopt = AltOptFramework(self.model, schedule)
-            self.optimizer = self.altopt.sgd._optimizer if self.altopt._sgd else None
+            _sgd = self.altopt.sgd  # trigger lazy SGD creation
+            self.optimizer = _sgd._optimizer
         else:
             # 8-bit AdamW for full-rank 7B: reduces optimizer memory from
             # 28GB to 3.5GB, enabling ZeRO-2 on 2×32GB GPUs (~31GB each).
@@ -326,6 +328,53 @@ class AltOptTrainer:
                     lr=cfg.lr, betas=cfg.adamw_betas, weight_decay=cfg.weight_decay,
                 )
 
+    def _setup_optimizer_for_deepspeed(self):
+        """Create optimizer BEFORE DeepSpeed engine — ZeRO-2 requires one.
+
+        DeepSpeed takes ownership of the optimizer; we pass it to
+        DeepSpeedEngine which forwards it to deepspeed.initialize().
+        """
+        cfg = self.config
+
+        if cfg.parameter_form == "lora":
+            # LoRA + DeepSpeed path (Protocol C/D experimental)
+            if cfg.optimizer_type == "altopt":
+                schedule = cfg.phase_schedule or PhaseSchedule(
+                    phases=[PhaseConfig(phase=Phase.SGD, steps=100, lr=cfg.lr)],
+                    cycles=1,
+                )
+                self.altopt = AltOptFramework(self.model, schedule)
+                self.optimizer = self.altopt.sgd._optimizer if self.altopt._sgd else None
+            else:
+                from torch.optim import AdamW
+                self.optimizer = AdamW(
+                    filter(lambda p: p.requires_grad, self.model.parameters()),
+                    lr=cfg.lr, betas=cfg.adamw_betas, weight_decay=cfg.weight_decay,
+                )
+            return
+
+        # Full-rank protocols (A, B) with DeepSpeed
+        if cfg.optimizer_type == "altopt":
+            schedule = cfg.phase_schedule or PhaseSchedule(
+                phases=[
+                    PhaseConfig(phase=Phase.SGD, steps=100, lr=cfg.lr),
+                    PhaseConfig(phase=Phase.PERTURB, steps=1, noise_scale=1e-3),
+                ],
+                cycles=3,
+            )
+            self.altopt = AltOptFramework(self.model, schedule)
+            _sgd = self.altopt.sgd  # trigger lazy SGD creation
+            self.optimizer = _sgd._optimizer
+        else:
+            # DeepSpeedCPUAdam: required for ZeRO-2/3 with CPU optimizer offload.
+            # Lives on CPU RAM (251GB) → GPU only needs model + gradients + activations.
+            from deepspeed.ops.adam import DeepSpeedCPUAdam
+            self.optimizer = DeepSpeedCPUAdam(
+                filter(lambda p: p.requires_grad, self.model.parameters()),
+                lr=cfg.lr, betas=cfg.adamw_betas, weight_decay=cfg.weight_decay,
+            )
+            logger.info("Using DeepSpeedCPUAdam + DeepSpeed ZeRO-2 (CPU optimizer offload)")
+
     def _setup_deepspeed(self):
         from .deepspeed_engine import DeepSpeedConfig, DeepSpeedEngine
 
@@ -334,6 +383,7 @@ class AltOptTrainer:
             bf16_enabled=self.config.deepspeed_bf16,
             fp16_enabled=self.config.deepspeed_fp16,
             gradient_accumulation_steps=self.config.gradient_accumulation_steps,
+            train_micro_batch_size_per_gpu=1,
         )
         self._deepspeed_engine = DeepSpeedEngine(
             self.model, ds_cfg, optimizer=self.optimizer

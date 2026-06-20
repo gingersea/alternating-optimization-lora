@@ -38,8 +38,8 @@ logger = logging.getLogger("B3-7B")
 MODEL_NAME = "Qwen/Qwen2.5-7B"
 DATASET_NAME = "wikitext-2-raw-v1"
 MAX_SEQ_LEN = 2048
-BATCH_SIZE = 2
-GRAD_ACCUM = 8              # effective batch = 16
+BATCH_SIZE = 1
+GRAD_ACCUM = 16             # effective batch = 16
 N_TRAIN = 1600              # training samples
 N_EVAL = 200                # eval samples
 MAX_STEPS = 800             # target steps
@@ -51,14 +51,16 @@ OUT_DIR.mkdir(parents=True, exist_ok=True)
 
 # DeepSpeed config
 DEEPSPEED_CFG = {
-    "train_batch_size": "auto",
-    "train_micro_batch_size_per_gpu": "auto",
+    "train_batch_size": BATCH_SIZE * GRAD_ACCUM,
+    "train_micro_batch_size_per_gpu": BATCH_SIZE,
     "gradient_accumulation_steps": GRAD_ACCUM,
     "gradient_clipping": 1.0,
     "bf16": {"enabled": True},
+    "zero_allow_untested_optimizer": True,
+    "zero_force_ds_cpu_optimizer": False,
     "zero_optimization": {
         "stage": 2,
-        "offload_optimizer": {"device": "none"},
+        "offload_optimizer": {"device": "cpu"},
         "allgather_partitions": True,
         "allgather_bucket_size": 2e8,
         "overlap_comm": True,
@@ -103,7 +105,12 @@ def build_altopt_schedule(n_steps: int, param_form: str = "full_rank") -> PhaseS
     For lora: SGD -> Perturb only (ALS targets full-rank modules,
     incompatible with LoRA parameterization).
     """
-    sgd_per_cycle = max(10, n_steps // 4)
+    # Depth-aware SGD budget: ≥28L needs ~350 SGD steps per ALS cycle
+    # to digest perturbation (τ ∝ L^1.2, τ ≈ 350 for 28L vs 125 for 12L).
+    if param_form == "full_rank":
+        sgd_per_cycle = min(n_steps // 2 - 2, 350)
+    else:
+        sgd_per_cycle = max(10, n_steps // 4)
     # Account for phases per cycle when computing n_cycles
     if param_form == "lora":
         n_phases_per_cycle = 2  # SGD + Perturb
@@ -112,7 +119,7 @@ def build_altopt_schedule(n_steps: int, param_form: str = "full_rank") -> PhaseS
     n_cycles = max(1, n_steps // (sgd_per_cycle + n_phases_per_cycle))
     phases = []
     if param_form != "lora":
-        phases.append(PhaseConfig(phase=Phase.ALS, steps=1, block_size=2048))
+        phases.append(PhaseConfig(phase=Phase.ALS, steps=1, block_size=512))
     phases.append(PhaseConfig(phase=Phase.SGD, steps=sgd_per_cycle, lr=5e-5))
     phases.append(PhaseConfig(phase=Phase.PERTURB, steps=1, noise_scale=5e-4))
     return PhaseSchedule(phases=phases, cycles=n_cycles)
@@ -125,14 +132,13 @@ def run_protocol(protocol_label, opt_type, param_form, seed, n_steps):
     logger.info(f"Running: {label} (optimizer={opt_type}, param_form={param_form})")
     logger.info("=" * 60)
 
-    # Load model (fresh for each run to avoid state leakage)
-    # Use device_map="auto" for all protocols — splits model across GPUs.
-    # 8-bit AdamW handles full-rank optimizer memory.
-    logger.info("Loading model: %s", MODEL_NAME)
+    # Load model to CPU — DeepSpeed manages device placement.
+    # Protocol A needs DeepSpeed for memory (full-rank 7B + optimizer > 32GB).
+    logger.info("Loading model to CPU: %s", MODEL_NAME)
     model = AutoModelForCausalLM.from_pretrained(
         MODEL_NAME,
         torch_dtype=torch.bfloat16,
-        device_map="auto",
+        device_map=None,   # CPU — DeepSpeed takes over
         trust_remote_code=False,
         local_files_only=True,
     )
@@ -156,7 +162,7 @@ def run_protocol(protocol_label, opt_type, param_form, seed, n_steps):
         seed=seed,
         eval_every=EVAL_EVERY,
         save_every=SAVE_EVERY,
-        use_deepspeed=False,
+        use_deepspeed=True,   # Protocol A: ZeRO-2 + CPU offload for memory
         gradient_accumulation_steps=GRAD_ACCUM,
         lora_r=8,
         lora_alpha=16.0,
@@ -235,11 +241,11 @@ def main():
         logger.info(f"  GPU {i}: {props.name}, {props.total_memory/1e9:.1f}GB")
     logger.info("=" * 70)
 
-    # PHASE B: Protocol B only (AdamW+full-rank, DeepSpeed ZeRO-2).
-    # Protocol A skipped — Qwen2.5-7B has 28 layers (≥28 = divergence boundary).
-    # Full-rank 7B needs 8-bit AdamW + ZeRO-2 for ~35GB → fits 2×32GB.
+    # PHASE C: Protocol A (AltOpt+full-rank) with depth-boundary fixes.
+    # ALS now has EMA damping, layer skip, and norm clip for ≥28L stability.
+    # Protocol B already done (PPL 1.25±0.01, 3 seeds).
     protocols = [
-        ("B", "adamw", "full_rank"),
+        ("A", "altopt", "full_rank"),
     ]
 
     all_results = []

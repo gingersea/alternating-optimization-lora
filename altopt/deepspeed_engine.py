@@ -70,7 +70,11 @@ class DeepSpeedConfig:
     """ZeRO stage: 0=disabled, 1=optimizer state, 2=+gradients, 3=+parameters."""
 
     offload_optimizer: bool = False
-    """Offload optimizer states to CPU (ZeRO-2). Reduces GPU memory at cost of speed."""
+    """Offload optimizer states to CPU (ZeRO-2/3). Reduces GPU memory at cost of speed.
+
+    Kept false by default — let the trainer override when needed (AdamW state needs it;
+    SGD state is light enough to stay on GPU).
+    """
 
     offload_param: bool = False
     """Offload parameters to CPU (ZeRO-3). Extreme memory savings, slow."""
@@ -123,6 +127,8 @@ class DeepSpeedConfig:
             "gradient_accumulation_steps": self.gradient_accumulation_steps,
             "gradient_clipping": self.gradient_clipping,
             "wall_clock_breakdown": self.wall_clock_breakdown,
+            "zero_allow_untested_optimizer": True,
+            "zero_force_ds_cpu_optimizer": False,
         }
 
         # Mixed precision
@@ -247,14 +253,14 @@ class DeepSpeedEngine:
             training_data: Optional dataset (for auto batch size inference).
             config_params: Optional overrides for the DeepSpeed config dict.
         """
-        # Set distributed env vars so DeepSpeed skips MPI discovery and uses NCCL.
-        # torchrun sets these automatically; for single-process single-GPU usage,
-        # we default WORLD_SIZE=1. DeepSpeed handles multi-GPU internally via ZeRO.
+        # Single-process multi-GPU via DeepSpeed ZeRO: WORLD_SIZE tells DeepSpeed
+        # how many GPUs to shard across in a single process. Requires mpi4py +
+        # OpenMPI for NCCL collective ops. GPU count auto-detected via CUDA_VISIBLE.
+        gpu_count = torch.cuda.device_count()
         os.environ.setdefault("MASTER_ADDR", "localhost")
         os.environ.setdefault("MASTER_PORT", "29500")
         os.environ.setdefault("RANK", "0")
-        os.environ.setdefault("WORLD_SIZE", "1")
-        os.environ.setdefault("LOCAL_RANK", "0")
+        os.environ.setdefault("WORLD_SIZE", str(gpu_count))
 
         # Move model to CPU so DeepSpeed can manage device placement
         self.model = self.model.cpu()
