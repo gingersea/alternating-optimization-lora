@@ -68,10 +68,11 @@ class LoRALayer(nn.Module):
         if self.base_layer.bias is not None:
             self.base_layer.bias.requires_grad = False
 
-        # LoRA parameters (created on same device as base layer)
+        # LoRA parameters (created on same device and dtype as base layer)
         device = base_layer.weight.device
-        self.lora_A = nn.Parameter(torch.empty(r, d_in, device=device))
-        self.lora_B = nn.Parameter(torch.empty(d_out, r, device=device))
+        dtype = base_layer.weight.dtype
+        self.lora_A = nn.Parameter(torch.empty(r, d_in, device=device, dtype=dtype))
+        self.lora_B = nn.Parameter(torch.empty(d_out, r, device=device, dtype=dtype))
         self.scaling = config.scaling
 
         self.dropout = nn.Dropout(config.dropout) if config.dropout > 0 else nn.Identity()
