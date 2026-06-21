@@ -1,9 +1,9 @@
 # Disentangling Optimizer and Parameter Form: A 2×2 Factorial Study of Alternating Optimization vs Low-Rank Adaptation for LLM Post-Training
 
 **Authors**: [To be determined]  
-**Status**: Revised Draft v0.6 — 8 architectures, GPU 7B validation, depth boundary  
-**Date**: 2026-06-14  
-**Date**: 2026-06-12
+**Status**: Revised Draft v0.7 — 9 architectures, Qwen2.5-7B full-rank + LoRA completed, depth boundary 9/9  
+**Date**: 2026-06-20  
+**Previous**: v0.6 (2026-06-14)
 
 ---
 
