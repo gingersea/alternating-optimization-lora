@@ -159,20 +159,53 @@ Ranked by scientific impact (highest first).
 
 ---
 
-### Summary
+### Status of P0-P5
 
-| # | Item | Impact | GPU | Key Question |
-|---|------|--------|-----|-------------|
-| P0 | Chinese WT | 🔴 HIGH | Done | Language-independent r=8 plateau | ← DONE |
-| P1 | ASP crossover | 🔴 HIGH | Running | GPT-2 800s × 2 seeds CPU; OPT pending | ← RUNNING |
-| P2 | T5 encoder-decoder | 🟡 HIGH | 30min | Per-stack r_min valid? |
-| P3 | M-index calibration | 🟡 MED-HIGH | Done | β_0.5B≈-0.03 vs β_7B≈0.28; scale phase transition | ← DONE |
-| P4 | SmolLM2 fine-grained | 🟢 MED | 10min | Exact r_min value? |
-| P5 | Multi-seed rank curve | 🟢 MED | Done | r=8 plateau ±0.002 SE across 3 seeds | ← DONE |
-
-All items are non-blocking for paper submission. Each would strengthen a specific theoretical claim. P0 and P1 are the highest-value scientific contributions.
+| # | Item | Impact | Status | Result |
+|---|------|--------|--------|--------|
+| P0 | Chinese WT | 🔴 | ✅ DONE | r=8 language-independent; η∝H falsified |
+| P1 | ASP crossover | 🔴 | ✅ DONE | SGD+Perturb=2.00 vs AdamW=2.78 on GPT-2 (+28%) |
+| P2 | T5 encoder-decoder | 🟡 | ✅ BOUNDARY | LM PPL incompatible; boundary confirmed |
+| P3 | M-index calibration | 🟡 | ✅ DONE | β scale-dependent; overfitting is phase transition |
+| P4 | SmolLM2 fine-grained | 🟢 | ✅ DONE | r_min≈12 ±1 confirmed |
+| P5 | Multi-seed rank curve | 🟢 | ✅ DONE | SE<0.002; max|Δ|=0.0055 |
 
 ---
 
-*Last updated: 2026-06-22, v2.0*
+## Future Enhancement Directions (Post-Submission)
+
+### Theory Completion
+
+| ID | Direction | Experiment | GPU | Value | Status |
+|----|-----------|-----------|-----|-------|--------|
+| **F1** | **η mechanism attribution** | r=4 at 400/800/1600 samples on Qwen2.5-0.5B; discriminates intrinsic dimension vs training budget | 30min | 🔴 Closes paper's explicit open question | ⬜ |
+| F2 | Full ASP crossover | OPT-125m with Cholesky ALS at 2000 steps; validates true ASP convergence | 2h CPU | 🔴 Most-cited open question | ⬜ |
+| F3 | Multi-task η | GLUE tasks (SST-2, MNLI, MRPC): r=8 vs r=32; tests task-generality of η | 2h GPU | 🟡 Extends to classification | ⬜ |
+| F4 | MoE validation | Mixtral-8×7B r=4/8/32; tests sparse FFN correction | 45min | 🟡 Generalizes to sparse architectures | ⬜ |
+
+### Empirical Breadth
+
+| ID | Direction | Experiment | GPU | Value | Status |
+|----|-----------|-----------|-----|-------|--------|
+| **E1** | **Training budget scaling** | r=4 at N_train=200/400/800/1600; derive r_min(N_samples) closed form | 30min | 🔴 Closes second open prediction | ⬜ |
+| E2 | Long-horizon rank stability | r=8 vs r=256 at 200/400/800/1600 steps | 30min | 🟡 Resolves §6.9.2 uncertainty | ⬜ |
+| E3 | LLaMA-3.2 validation | Full rank curve on LLaMA-3.2-1B/3B | 1h | 🟢 Confirms cross-family | ⬜ |
+| E4 | FFN LoRA | LoRA on gate/up/down layers; predicts r_min lowered | 20min | 🟢 Tests break condition #3 | ⬜ |
+
+### Practical Impact
+
+| ID | Direction | Experiment | GPU | Value | Status |
+|----|-----------|-----------|-----|-------|--------|
+| P1-ds | GLUE downstream | r=8 vs r=32 on GLUE tasks | 1h | 🟡 Closes remaining generalization gap | ⬜ |
+| P2-tb | Training budget equation | Derive r_min(N_samples) = η(800)×800/N_samples | — | 🟡 Pure derivation from §6.8 | ⬜ |
+
+### Priority Order (Next to Execute)
+
+1. **F1 + E1 combined**: η mechanism + training budget scaling (same experiment, two interpretations) — **highest scientific ROI for 30min GPU**
+2. **F2**: Full ASP crossover — closes paper's longest-standing open question
+3. **F3**: Multi-task η — extends law beyond perplexity
+
+---
+
+*Last updated: 2026-06-22, v2.3*
 
