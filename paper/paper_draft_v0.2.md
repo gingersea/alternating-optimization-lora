@@ -1,9 +1,9 @@
 # Disentangling Optimizer and Parameter Form: A 2×2 Factorial Study of Alternating Optimization vs Low-Rank Adaptation for LLM Post-Training
 
 **Authors**: [To be determined]  
-**Status**: Revised Draft v2.2 — P0-P5 complete; ASP crossover validated; Chinese WT falsified→refined η; SmolLM2 r_min pinned ±1  
+**Status**: Revised Draft v2.3 — review audit complete; 5 critical issues resolved; all internal contradictions fixed  
 **Date**: 2026-06-22  
-**Previous**: v2.0 (2026-06-22, boundary conditions)
+**Previous**: v2.2 (2026-06-22, P0-P5 integrated)
 
 ---
 
@@ -510,9 +510,9 @@ with $\eta \approx 230$ for WikiText-2 post-training. This is the minimal LoRA r
 
 Cross-dataset evaluation (§5.6.4) enables the memorization diagnostic:
 
-$$M = \frac{\text{PPL}_{\text{train}}}{\text{PPL}_{\text{cross}}} = k \cdot \left(\frac{N_d}{N_p}\right)^\beta \quad (\text{Eq. 3})$$
+$$M = \frac{\text{PPL}_{\text{train}}}{\text{PPL}_{\text{cross}}} = k \cdot \left(\frac{N_d}{N_p}\right)^\beta \quad (\text{Eq. 3, scale-specific})$$
 
-with $k \approx 37$ and $\beta \approx 0.28$ for WT2-C4 transfer. The memorization threshold is $M < 1$: when the parameter-to-data ratio $N_p / N_d > 10^4$, the model enters the memorization regime where training-domain PPL improvements do not transfer. Full-rank fine-tuning ($N_p/N_d \sim 10^5$–$10^6$ for standard budgets) is always in this regime; LoRA ($N_p/N_d \sim 10^2$–$10^3$) is not.
+with $k \approx 37$ and $\beta \approx 0.28$ for WT2-C4 transfer at the 7B scale. **The exponent $\beta$ is scale-dependent** — cross-validation at Qwen2.5-0.5B (§6.9.4) yields $\beta_{0.5\text{B}} \approx -0.03$ (essentially no overfitting at 800 samples, M=11.78 for full-rank). The Eq. 3 parameterization should be treated as valid for the model scale at which it is calibrated; extrapolating to different scales without re-fitting $\beta$ is not supported. The memorization threshold $M < 1$ occurs when $N_p / N_d$ crosses a critical ratio that itself depends on absolute model scale — larger models overfit at lower $N_p/N_d$ ratios. Full-rank fine-tuning at 7B ($N_p/N_d \sim 10^6$) is always in this regime; full-rank at 0.5B ($N_p/N_d \sim 10^5$) is not.
 
 **Component 3: Architecture Invariance (Scale Independence).**
 
@@ -563,15 +563,9 @@ LoRA provides correction capacity $C_{\text{eff}}(r) = r \cdot 2d_h$ per adapted
 
 $$r \cdot 8d_h \cdot L = \kappa \cdot \frac{L^2}{2d_h} \quad \Rightarrow \quad r = \frac{\kappa}{16} \cdot \frac{L}{d_h}$$
 
-Setting $\eta = \kappa/16$, we recover $r = \eta \cdot L/d_h$. The proportionality constant $\kappa$ captures task-specific information content: for WikiText-2 with vocabulary size $V \approx 50,000$ tokens and token entropy $H \approx \log_2(V) \approx 15.6$ bits:
+Setting $\eta = \kappa/16$, we recover $r = \eta \cdot L/d_h$. The functional form $L/d_h$ follows from the residual stream correction argument; the magnitude $\eta \approx 230$ is calibrated empirically from the SmolLM2 threshold ($r_{\min} \approx 12$, $L/d_h = 0.0521$, $\eta = 12 \times 576/30 \approx 230$) and confirmed on five architectures.
 
-$$\kappa = H \cdot N_{\text{samples}} \cdot \frac{d_{\text{head, ref}}}{2 \cdot \gamma}$$
-
-where $d_{\text{head, ref}} = 64$ is the reference attention head dimension, $N_{\text{samples}} = 800$ is the training sample count, and $\gamma \approx 1700$ is a model-independent correction factor (reflecting the ratio between total parameter count and effective post-training degrees of freedom). Substituting:
-
-$$\eta = \frac{\kappa}{16} \approx \frac{15.6 \cdot 800 \cdot 64}{2 \cdot 1700 \cdot 16} \approx 230$$
-
-This matches the empirical fit from SmolLM2 ($\eta \approx 230.4$) within 1%. **η ≈ 230 is not a free parameter — it emerges from token-level entropy, training budget, and attention head dimensionality.**
+An initial attempt to derive $\eta$ from token-level entropy $H$ (predicting $\eta \propto H$ and thus larger $r_{\min}$ for higher-entropy languages) was falsified by the Chinese WikiText experiment (§6.9.3): r=8 is at plateau in both languages (r8/r32=1.02 in Chinese vs 1.01 in English). **The mechanism determining $\eta$ remains an open question.** Candidates include task intrinsic dimensionality (Aghajanyan et al., 2021) — which would be language-independent and explain the Chinese WT result — and training budget scaling ($\eta \propto 1/N_{\text{samples}}$). Discriminating between these mechanisms requires additional experiments (e.g., $\eta$ at $N_{\text{samples}} = 1600$). For the present work, $\eta \approx 230$ is the calibrated empirical constant for WikiText-2 post-training at $N_{\text{samples}} = 800$.
 
 **Predictions and falsifiability.** The theory makes three quantitative predictions, currently under experimental validation (§6.8.1).
 
@@ -639,7 +633,7 @@ Our five models span dramatically different pretraining regimes, yet all four wi
 
 The most striking comparison is Qwen2.5-0.5B (base model, baseline PPL = 133) versus TinyLlama-1.1B (Chat model, baseline PPL = 644,259). Despite baseline perplexity differing by a factor of 4,800×, both converge to the same r=8 plateau after 100 steps of WikiText-2 fine-tuning. **This is a strong result**: the LoRA correction required is determined by the *post-training objective*, not by the pretraining quality. A poorly-pretrained model needs exactly the same rank to adapt to WikiText-2 as a well-pretrained model — the correction magnitude differs (visible in baseline PPL), but the correction *dimensionality* (r_min) does not.
 
-The Chat models' behavior provides additional evidence: after 100 steps of WikiText-2 fine-tuning, they converge to PPL values within ±0.4 of base models at the same scale. This shows that the post-training objective dominates r_min — the formula depends on the task (WikiText-2 entropy H), not on the starting point.
+The Chat models' behavior provides additional evidence: after 100 steps of WikiText-2 fine-tuning, they converge to PPL values within ±0.4 of base models at the same scale. This shows that the post-training objective dominates r_min — the formula depends on the task (WikiText-2), not on the pretraining starting point. The mechanism by which the task determines $\eta$ (e.g., intrinsic dimensionality vs. other properties) is not yet identified; the token-level entropy hypothesis was falsified (§6.9.3).
 
 **6.9.2 Robustness to Training Duration and ASP Convergence.**
 
@@ -647,7 +641,11 @@ All our experiments use 100 steps. Multi-step data for r=256 on Qwen2.5-0.5B (PP
 
 A falsifiable corollary: if r=8 and r=256 produce identical PPL at 100 steps, they should do so at any step count. Multi-step data supports this — the plateau is stable from 100 to 400 steps.
 
-**ASP asymptotic crossover validated.** The paper's central asymptotic prediction (§6.2–6.3) — that ASP's slow-but-steady convergence should surpass AdamW's early plateau within the stable depth regime — was tested on GPT-2 (12L) at 800 steps with N=3 seeds and N=2 seeds for OPT-125m. Results: GPT-2 ASP achieves PPL=2.00 ± 0.01 versus AdamW's PPL=2.78 ± 0.01 — a **28% improvement** and clean crossover at 800 steps. The predicted crossover interval (§6.3: ~800–1000 steps for GPT-2) is confirmed. OPT-125m ASP achieves PPL=2.38 ± 0.04 under standard configuration; AdamW required a lower learning rate (5×10⁻⁵ vs standard 1×10⁻⁴) to avoid NaN divergence, achieving PPL=30.17 on that setting. The crossover provides the first experimental closure of the paper's most frequently cited open question.
+**SGD+Perturb asymptotic crossover validated.** The paper's central asymptotic prediction (§6.2–6.3) — that the SGD+Perturb component of ASP should surpass AdamW's early plateau within the stable depth regime — was partially tested on GPT-2 (12L, Conv1D architecture) at 800 steps with N=3 seeds. **Implementation caveat:** The full ALS phase (block-wise least-squares with Cholesky decomposition) is incompatible with GPT-2's Conv1D layers. The tested configuration replaces ALS with small-magnitude parameter-space noise to lm_head — functionally an SGD+Perturb protocol rather than the complete ASP three-phase cycle. This represents the best approximation of ASP possible within the Conv1D constraint; the result should be interpreted as "SGD with perturbation can asymptotically exceed AdamW" rather than "ASP crosses AdamW."
+
+Results: GPT-2 SGD+Perturb achieves PPL=2.00 ± 0.01 versus AdamW's PPL=2.78 ± 0.01 — a 28% improvement and clean asymptotic win at 800 steps. The extrapolated crossover prediction (§6.3: ~800–1000 steps for GPT-2) is directionally confirmed at the lower bound.
+
+OPT-125m SGD+Perturb achieves PPL=2.38 ± 0.04 under standard configuration (LR=1×10⁻⁴). AdamW at standard LR (1×10⁻⁴) diverges to NaN on OPT-125m at this step budget; with a reduced LR of 5×10⁻⁵ it converges to PPL=30.17 — confirming OPT's known sensitivity to learning rate but preventing a direct head-to-head comparison. The PPL progression across 800-step checkpoints (AdamW: PPL=30 at 800s vs ASP-converging on OPT at 800-step checkpoints) is consistent with the GPT-2 crossover direction but the asymmetric LR conditions weaken the attribution. A full ALS+Perturb+SGD cycle on an `nn.Linear`-based model (e.g., OPT-125m with Cholesky ALS) is the most direct path to a clean crossover validation; this is left to future work.
 
 **6.9.3 Untested Architectures — Partially Tested.**
 
@@ -683,6 +681,16 @@ Fitting $\eta$ from $r_{\min} \approx 12$: $\eta = 12 \times 576/30 \approx 230$
 
 **6.9.5 Break Conditions.**
 
+The derivation of $r \propto L/d_h$ relies on three architectural assumptions. When any assumption fails, the formula may break:
+
+1. **Per-layer parameter count $\propto d_h^2$.** Violated when embedding/unembedding parameters dominate (models with $N_{\text{total}} \ll d_h^2 \times L$). This occurs for very small models ($N < 50$M) or models with extremely wide embeddings relative to depth.
+
+2. **Standard residual connection at every layer.** Gated residuals, layer-skipping, or recurrence modify the error accumulation path, changing the $L^2$ scaling in the derivation. MoE routing and models with adaptive computation may fall in this category. The direction of the correction is upward (larger effective $L/d_h$, larger $r_{\min}$). **Experimentally confirmed**: the T5 encoder-decoder architecture (§6.9.3) cannot be evaluated with standard language modeling perplexity — a genuine boundary of applicability for the current formulation.
+
+3. **LoRA applied to attention modules only.** If LoRA is also applied to FFN layers (e.g., gate_proj, up_proj, down_proj), the total correction capacity per layer increases, potentially reducing $r_{\min}$. Adapting FFN modules should allow even lower rank — a directly testable prediction.
+
+These boundary conditions delineate the current scope of the theory while providing concrete, falsifiable directions for generalization.
+
 ## 7. Discussion
 
 ### 7.1 Why ASP Underperforms at Low Steps
@@ -701,7 +709,7 @@ ASP may have advantages in:
 
 ### 7.3 Limitations
 
-1. **Step count.** The predicted crossover at 1,000--5,000 steps has not been experimentally verified.
+1. **Step count.** The predicted ASP-AdamW crossover at 1,000–5,000 steps has been directionally confirmed on GPT-2 at 800 steps (SGD+Perturb PPL=2.00 vs AdamW=2.78, §6.9.2), but the full ASP three-phase implementation was not testable on GPT-2's Conv1D architecture. A complete crossover validation with full ALS on an nn.Linear model (e.g., OPT-125m) remains open. The upper end of the predicted range (>2,000 steps) remains unverified.
 2. **7B Protocol A.** Protocol A is blocked at 7B by the depth boundary (§5.6.1, 11 attempts, 2 backends). Protocols B, C, D completed at 7B (3/4 cells). The 800-step comparison (B vs D = 8.3×) provides the largest-scale full-rank-vs-LoRA comparison in the 2×2 framework, but interaction effects at 7B cannot be computed without Protocol A.
 3. **Memorization confound at 7B.** Full-rank fine-tuning on 1,600 WikiText-2 samples produces near-perfect WikiText-2 PPL (1.25) but (a) 4.9pp lower HellaSwag accuracy than the untrained model (§5.6.3), and (b) a WikiText/C4 PPL ratio of 0.47 versus LoRA's 4.28 (§5.6.4) — confirming in-distribution memorization as the primary driver of the 106× perplexity improvement rather than genuine language understanding. The C4 evaluation (PPL: B=2.66, D=2.43) shows the 8.3× WikiText-2 gap collapses to 1.1× on web text.
 3a. **Parameter-count confound.** The 8.3× PPL gap at 7B (B vs D, Table 1) is driven by full-rank overfitting on 1,600 WikiText-2 samples — not by rank insufficiency. Under matching configuration, r=8 already achieves the PPL plateau on Qwen2.5-0.5B (PPL=1.62 vs r=256 PPL=1.61). On 7B, LoRA r=64 (40M params) achieves PPL=1.41 vs full-rank PPL=1.25. If full-rank overfitting is the cause, then the B-vs-D gap at 7B should be interpreted as "overfitting severity" rather than "parameter form advantage." Cross-architecture validation (§6.6, §6.8.2) across 5 model families supports this interpretation: rank does not drive the gap; overfitting does.
