@@ -190,7 +190,7 @@ alternating-optimization-lora/
 
 | Priority | Item | Key Question | GPU |
 |----------|------|-------------|-----|
-| 🔴 P0 | Chinese WikiText rank curve | Does $\eta$ scale with token entropy $H$? | 15min |
+| 🔴 P0 | Chinese WikiText rank curve | Does $\eta$ scale with token entropy $H$? | 15min | ✅ **DONE — FALSIFIED. r=8 plateau language-independent** |
 | 🔴 P1 | ASP long-horizon crossover | Does ASP ever catch AdamW? | ~2h |
 | 🟡 P2 | T5 encoder-decoder validation | Per-stack $r_{\min}$ prediction? | 30min |
 | 🟡 P3 | M-index cross-scale calibration | Power-law hold at intermediates? | 20min |

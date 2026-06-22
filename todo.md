@@ -85,17 +85,13 @@ Ranked by scientific impact (highest first).
 
 ---
 
-### 🔴 P0: Chinese WikiText — Test η ∝ H Prediction
+### ✅ P0: Chinese WikiText — DONE (2026-06-22)
 
-**Scientific question**: The unified theory predicts $r_{\min} = \eta \cdot L/d_h$ where $\eta \propto H$ (token-level entropy). Chinese has substantially higher per-token entropy than English. The theory therefore predicts **$r=8$ is INSUFFICIENT for Chinese WikiText** — a direct falsification test.
-
-**Experiment**: Rank curve (r=8, r=32, r=256) on Qwen2.5-0.5B with Chinese WikiText-103.
-
-**Expected outcome**: r=8 PPL significantly worse than r=32 (unlike English where they're equal). Quantitative prediction: $r_{\min}(\text{Chinese}) \approx r_{\min}(\text{English}) \cdot H_{\text{cn}}/H_{\text{en}}$.
-
-**Status**: ⬜ Pending `wikitext-103-raw-v1` dataset download. Script not yet written.
-
-**GPU time**: ~15 min (3 runs × 100 steps on 0.5B).
+**Result**: Prediction FALSIFIED. r=8 at plateau on Chinese (r8/r32=1.02).
+**Stronger finding**: r=8 universality is LANGUAGE-INDEPENDENT. η ∝ H NOT supported.
+**CN/EN ratio**: 7.8× constant across all ranks — language-intrinsic PPL, not rank-dependent.
+**New question**: What DOES determine η? Not token entropy. Task intrinsic dimensionality?
+**Script**: `experiments/_p0_chinese_wt.py` | **Results**: `runs/p0_chinese_wt/results.json`
 
 ---
 
