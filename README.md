@@ -5,7 +5,8 @@
 > Core finding: $r_{\min} = \eta \cdot L/d_h$ ($\eta \approx 230$) — a mathematically derived, experimentally falsified rank sufficiency law for LoRA post-training.
 > The widely reported "full-rank beats LoRA" is a full-rank overfitting artifact.
 >
-> **Status**: Paper v2.0 — 6 rounds of review solved. Unified three-component theory + falsification experiments passed.
+> **Status**: Paper v2.0 — 6 rounds of review solved. Unified three-component theory + 3/3 falsification passed.
+> **Next**: P0-P5 science items listed in [todo.md](todo.md). Highest impact: Chinese WikiText ($\eta \propto H$ test) + ASP convergence crossover.
 
 ---
 
@@ -184,6 +185,19 @@ alternating-optimization-lora/
 - [x] Falsification experiments: 3/3 PASSED
 - [x] Boundary conditions analysis (§6.9)
 - [x] Convergence of evidence: $r=8$ universally sufficient, full-rank always overfits
+
+## Next Steps (Scientifically Valuable)
+
+| Priority | Item | Key Question | GPU |
+|----------|------|-------------|-----|
+| 🔴 P0 | Chinese WikiText rank curve | Does $\eta$ scale with token entropy $H$? | 15min |
+| 🔴 P1 | ASP long-horizon crossover | Does ASP ever catch AdamW? | ~2h |
+| 🟡 P2 | T5 encoder-decoder validation | Per-stack $r_{\min}$ prediction? | 30min |
+| 🟡 P3 | M-index cross-scale calibration | Power-law hold at intermediates? | 20min |
+| 🟢 P4 | SmolLM2 fine-grained threshold | Exact $r_{\min}$ value? | 10min |
+| 🟢 P5 | Multi-seed rank curve (0.5B) | Statistical robustness of plateau? | 20min |
+
+Full details: [todo.md](todo.md)
 
 ## License
 
