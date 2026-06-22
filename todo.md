@@ -169,12 +169,12 @@ Ranked by scientific impact (highest first).
 
 | # | Item | Impact | GPU | Key Question |
 |---|------|--------|-----|-------------|
-| P0 | Chinese WT | 🔴 HIGH | 15min | Does η scale with H? |
-| P1 | ASP crossover | 🔴 HIGH | 2h | Does ASP ever catch AdamW? |
+| P0 | Chinese WT | 🔴 HIGH | Done | Language-independent r=8 plateau | ← DONE |
+| P1 | ASP crossover | 🔴 HIGH | Running | GPT-2 800s × 2 seeds CPU; OPT pending | ← RUNNING |
 | P2 | T5 encoder-decoder | 🟡 HIGH | 30min | Per-stack r_min valid? |
-| P3 | M-index calibration | 🟡 MED-HIGH | 20min | Power law at intermediates? |
+| P3 | M-index calibration | 🟡 MED-HIGH | Done | β_0.5B≈-0.03 vs β_7B≈0.28; scale phase transition | ← DONE |
 | P4 | SmolLM2 fine-grained | 🟢 MED | 10min | Exact r_min value? |
-| P5 | Multi-seed rank curve | 🟢 MED | 20min | Statistical robustness? |
+| P5 | Multi-seed rank curve | 🟢 MED | Done | r=8 plateau ±0.002 SE across 3 seeds | ← DONE |
 
 All items are non-blocking for paper submission. Each would strengthen a specific theoretical claim. P0 and P1 are the highest-value scientific contributions.
 

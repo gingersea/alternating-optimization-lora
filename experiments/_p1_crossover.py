@@ -21,6 +21,8 @@ ML, BS, NTr, NEv, LR, WD = 512, 4, 200, 100, 1e-4, 0.01
 MAX_STEPS = 800
 LOG_EVERY = 200
 SEEDS = [42, 123, 456]
+CUDA = torch.cuda.is_available()
+DEVICE = "cuda" if CUDA else "cpu"
 OUT = "runs/p1_crossover"
 
 import logging
@@ -162,7 +164,7 @@ def run_model(name, hf):
         tokenizer.pad_token = tokenizer.eos_token
     tr_dl = build_dl(tokenizer, "train", NTr)
     ev_dl = build_dl(tokenizer, "test", NEv)
-    dev = torch.device("cpu")  # GPT-2/OPT-125m fit easily on CPU
+    dev = torch.device(DEVICE)  # GPU when available
 
     results = []
     for seed in SEEDS:
