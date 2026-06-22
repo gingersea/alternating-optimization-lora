@@ -1,7 +1,7 @@
 # Project Status — v3.2 FINAL
 
 **Date**: 2026-06-22
-**Status**: ✅ Complete. 10 experiments done. Grok review cleared (Minor Revision → Accept). Paper v3.2 ready.
+**Status**: ✅ Complete. 11 experiments done (P0-P5 + F1-F2 + A). Grok review cleared (Minor Revision → Accept). Paper v3.2 ready.
 
 ---
 

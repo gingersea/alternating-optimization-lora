@@ -1,9 +1,9 @@
 # Disentangling Optimizer and Parameter Form: A 2×2 Factorial Study of Alternating Optimization vs Low-Rank Adaptation for LLM Post-Training
 
 **Authors**: [To be determined]  
-**Status**: Final Draft v3.0 — complete; 10 experiments (P0-P5 + F1-F2); all open questions resolved or honestly bounded  
+**Status**: Final Draft v3.2 — 11 experiments complete (P0-P5 + F1-F2 + A); Grok review passed (Minor Revision → Accept)  
 **Date**: 2026-06-22  
-**Previous**: v2.3 (2026-06-22, review audit)
+**Previous**: v3.0 (2026-06-22)
 
 ---
 
