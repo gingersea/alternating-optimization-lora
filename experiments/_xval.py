@@ -17,14 +17,12 @@ NT, NE, LR, SD = 800, 100, 1e-4, 42
 torch.manual_seed(SD)
 
 MODEL_CFG = [
-    ("TinyLlama-1.1B", "TinyLlama/TinyLlama-1.1B-Chat-v1.0",
+    # Reference model (matching config to confirm phase transition)
+    ("Qwen2.5-0.5B", "Qwen/Qwen2.5-0.5B",
      ["q_proj", "v_proj", "k_proj", "o_proj"]),
-    ("SmolLM2-135M", "HuggingFaceTB/SmolLM2-135M",
-     ["q_proj", "v_proj", "k_proj", "o_proj"]),
-    ("DeepSeek-1.5B", "deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B",
-     ["q_proj", "v_proj", "k_proj", "o_proj"]),
-    ("Mistral-7B", "mistralai/Mistral-7B-v0.3",
-     ["q_proj", "v_proj", "k_proj", "o_proj"]),
+    # 7B-scale LoRA-only (B_full OOM on single GPU)
+    ("Mistral-7B-lora", "mistralai/Mistral-7B-v0.3",
+     ["q_proj", "v_proj", "k_proj", "o_proj"], True),  # skip B_full
 ]
 RANKS = [8, 32, 256]
 OUT_DIR = Path("runs/cross_arch")
