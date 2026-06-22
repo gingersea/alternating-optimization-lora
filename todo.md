@@ -1,7 +1,7 @@
-# Project Status — v3.2 FINAL
+# Project Status — v3.3 FINAL
 
 **Date**: 2026-06-22
-**Status**: ✅ Complete. 12 experiments done (P0-P5 + F1-F2 + A + E4). Grok review cleared (Minor Revision → Accept). Paper v3.2 ready.
+**Status**: ✅ Complete. 14 experiments done (P0-P5 + F1-F2 + A + E4 + Critical r=4 + E2). Grok review cleared (Minor Revision → Accept). Paper v3.2 ready.
 
 ---
 
@@ -35,7 +35,7 @@ All core experiments, downstream evaluations, cross-dataset validations, and mat
 | F3 | Multi-task η (GLUE) | 2h | 🟡 | Does r=8 plateau extend to classification tasks? |
 | F4 | MoE validation (Mixtral) | 45min | 🟡 | Does sparse FFN change effective L/d_h? |
 | E1 | Training budget equation | — | 🟡 | Derive r_min(N_samples) closed form |
-| E2 | Long-horizon rank stability | 30min | 🟢 | r=8 plateau at 200-1600 steps? |
+| E2 | Long-horizon rank stability | Done | ✅ | r=8 SUPERIOR at long-horizon; r=256 overfits |
 | E3 | LLaMA-3.2 validation | 1h | 🟢 | Cross-family confirmation |
 | E4 | FFN LoRA | 20min | 🟢 | Test break condition #3 — lower r_min? |
 
