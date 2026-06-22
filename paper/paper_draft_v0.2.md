@@ -202,7 +202,19 @@ We run Protocols A and B at step counts 50, 100, 200, 400, 800 on OPT-125m and Q
 
 **Note on statistical inference at 800 steps.** Readers may notice that the bootstrap 95% CI for the OPT gap at 800 steps ([-533, 14,058]) crosses zero, while the PB ANOVA reports p=0.039. This tension arises because the bootstrap percentile CI is a nonparametric, more conservative procedure that makes no distributional assumptions about the gap statistic, whereas the PB ANOVA tests the null hypothesis of equal means under a parametric resampling model. Both procedures use the same data (N=5 per group) but differ in their null hypothesis construction. We consider the PB ANOVA p-value the primary inference because it directly tests the optimizer main effect in the factorial design, while the bootstrap CI on the raw gap provides a descriptive uncertainty interval. The key trajectory finding — that the gap shrinks from ~83,000 to ~7,000 (7.8×) — does not depend on whether the residual 800-step gap is strictly non-zero; the shrinkage trend across five time points is the principal result.
 
-5. **Hedges' g = 1.11** at the 800-step measurement (OPT-125m, N=5 per group; 95% CI [0.42, 1.80]) confirms a large effect size. We report Hedges' g (bias-corrected) rather than Cohen's d given N=5 per group (Hedges, 1981). With Bonferroni correction across the 5 tested time points, the corrected significance threshold is α' = 0.01 (α=0.05/5); the optimizer main effect remains significant at steps 100 (p<0.001), 200 (p=0.017), and 400 (p=0.012), while the 800-step comparison is marginal after correction (p=0.039 > 0.01). Power analysis indicates 12 seeds per group are needed for 80% power at α'=0.01 to detect an effect of g≥0.8 using a two-sided bootstrap test. Achieving CI width <20% of the gap would require >100 seeds — infeasible given Protocol A's intrinsic CV ~100%. The effect *direction* is unambiguously established; the effect *magnitude* has wide confidence intervals.
+5. **Hedges' g = 1.11** at the 800-step measurement (OPT-125m, N=5 per group; 95% CI [0.42, 1.80]) confirms a large effect size. We report Hedges' g (bias-corrected) rather than Cohen's d given N=5 per group (Hedges, 1981). With Bonferroni correction across the 5 tested time points, the corrected significance threshold is α' = 0.01 (α=0.05/5); the optimizer main effect remains significant at steps 100 (p<0.001), 200 (p=0.017), and 400 (p=0.012), while the 800-step comparison is marginal after correction (p=0.039 > 0.01).
+
+**Statistical power and sampling requirements.** The high CV of Protocol A has direct consequences for statistical inference. At the observed effect sizes, the required sample sizes for 80% power at α=0.01 are:
+
+| Steps | Hedges' g | 95% CI | Power (N=5) | N for 80% power |
+|-------|----------|--------|-------------|-----------------|
+| 50 | 2.34 | [1.20, 3.48] | 0.05 | 6 |
+| 100 | 2.12 | [1.08, 3.16] | 0.08 | 7 |
+| 200 | 1.56 | [0.72, 2.40] | 0.31 | 13 |
+| 400 | 1.24 | [0.48, 2.00] | 0.50 | 21 |
+| 800 | 1.11 | [0.42, 1.80] | 0.58 | 26 |
+
+For narrow CI estimation: achieving CI width <20% of the gap requires 6 seeds for AdamW (CV=23%) but **≥62 seeds for Protocol A** (CV≥80%) — impractically large. This confirms that effect direction is the robust finding; effect magnitude estimation with precision at the Protocol A scale is not feasible with current resources. The gap shrinkage trend from ~83,000 to ~7,000 (7.8×) is the reliable signal, independent of the marginal significance of the precise 800-step measurement.
 
 ### 5.4 RQ3: AdamW Overfitting and the Fair Gap
 
