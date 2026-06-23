@@ -53,3 +53,4 @@ datasets/
 *.aux
 *.log
 *.out
+*.aux\n*.log\n*.out\n*.toc
