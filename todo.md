@@ -37,7 +37,27 @@ All core experiments, downstream evaluations, cross-dataset validations, and mat
 | E1 | Training budget equation | — | 🟡 | Derive r_min(N_samples) closed form |
 | E2 | Long-horizon rank stability | Done | ✅ | r=8 SUPERIOR at long-horizon; r=256 overfits |
 | E3 | LLaMA-3.2 validation | 1h | 🟢 | Cross-family confirmation |
-| E4 | FFN LoRA | 20min | 🟢 | Test break condition #3 — lower r_min? |
+| E4 | FFN LoRA | Done | ✅ | attn+FFN r=4 beats attn-only r=8 — r_min lowered |
+
+## Extension Directions (3 Tracks, Post-Submission)
+
+### X1: Protocol C Low-Rank ALS Solver
+**Problem**: Protocol C drops ALS because Cholesky solver operates on `nn.Linear` weight matrices, not LoRA-parameterized layers ($W_{\text{base}} + BA$). The 2×2 factorial is therefore a partial ablation rather than a fully symmetric design.
+**Goal**: Implement a low-rank ALS solver that projects Cholesky solutions back to the low-rank space via $B_{\text{new}} = B_{\text{old}} + \Delta W_{\text{block}} \cdot A^T(AA^T + \lambda I)^{-1}/\alpha$.
+**Status**: ⬜ Theoretical formulation in §5.8; solver exists in altopt/als.py but numerically unstable on 7B+. Needs stabilization.
+**Value**: 🔴 Closes factorial symmetry. Enables true interaction-term computation for the first time at all model scales. Currently the paper's most significant methodological limitation.
+
+### X2: Causal Depth Boundary Theory
+**Problem**: $L^* \approx 26$ is empirically established but lacks causal structural explanation. When ALS updates layer $l$, the distribution shift propagates through $L-l$ residual connections, disrupting causal dependencies encoded in later layers.
+**Goal**: Formalize depth boundary as the point where cross-layer causal disruption exceeds SGD recovery. Connect to structural causal model (SCM) framework and causal representation learning. Derive $L^*$ from causal graph properties rather than perturbation amplification alone.
+**Status**: ⬜ Mathematical framework; empirical evidence exists (8 architectures, 11 failed 7B attempts).
+**Value**: 🔴 Elevates depth boundary from phenomenological observation to structural theory. Opens connection to causal interpretability literature.
+
+### X3: Universal $\eta$ Nomogram
+**Problem**: $\eta$ is now model-specific (modulated by pretraining quality $q^{-1}(N_{\text{pretrain}})$), but with only 6 architecture data points. A nomogram mapping $(L/d_h, N_{\text{pretrain}}) \rightarrow \eta \rightarrow r_{\min}$ would be a practical tool for practitioners.
+**Goal**: Characterize $\eta$ surface across 12+ architectures, spanning different pretraining budgets and model families. Produce lookup diagram (nomogram) and/or regression formula $\eta = f(L/d_h, N_{\text{pretrain}}, \text{architecture\_family})$.
+**Status**: ⬜ 6 of ~12 needed architectures tested. Need: LLaMA, Gemma, Phi, OPT deep variants, encoder-decoder.
+**Value**: 🟡 Universal nomogram for LoRA practitioners. High practical citation potential. Separates into standalone tool paper.
 
 ---
 
