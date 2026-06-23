@@ -110,7 +110,14 @@ We resolve this through a $2\times2$ factorial design, shown in Table~\ref{tab:p
 \end{tabular}
 \end{table}
 
-The comparisons A vs B and C vs D isolate the optimizer effect under full-rank and LoRA parameter forms respectively. Comparisons A vs C and B vs D isolate the parameter form effect under ASP and AdamW optimizers. The interaction term (A-B)-(C-D) captures whether the optimizer effect depends on parameter form.
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=0.95\textwidth]{figures/fig1_factorial.pdf}
+\caption{\textbf{The $2\times2$ factorial design.} (a) Direct comparison between ASP+full-rank and AdamW+LoRA conflates two independent variables---optimizer type and parameter form---making performance attribution impossible. (b) The four protocols of the factorial design disentangle these variables: A (ASP, full-rank), B (AdamW, full-rank), C (ASP, LoRA), D (AdamW, LoRA). Solid arrows show optimizer effect comparisons; dashed arrows show parameter form comparisons. The interaction term (A-B)-(C-D) captures parameter form $\times$ optimizer interaction modulo the Protocol C ALS caveat (\S3.2).}
+\label{fig:factorial}
+\end{figure}
+\noindent The comparisons A vs B and C vs D isolate the optimizer effect under full-rank and LoRA parameter forms respectively. Comparisons A vs C and B vs D isolate the parameter form effect under ASP and AdamW optimizers. The interaction term (A-B)-(C-D) captures whether the optimizer effect depends on parameter form.
 
 \textbf{Protocol C asymmetry.} Protocol C uses SGD+Perturbation alternation without ALS, since the current ALS solver operates on \texttt{nn.Linear} weight matrices and is not directly applicable to LoRA-parameterized layers (where weights take the form $W_{\text{base}} + (\alpha/r)BA$). This means Protocol C and Protocol A differ both in parameter form and in the presence/absence of the ALS phase. For the present study, Protocol C should be interpreted as ``ASP without ALS'' rather than ``full ASP on LoRA.''
 
@@ -177,6 +184,13 @@ Parametric bootstrap two-way ANOVA (OPT-125m, $N=3$ per cell) confirms the optim
 We run Protocols A and B at step counts 50, 100, 200, 400, 800 on OPT-125m and Qwen2.5-0.5B, with $N=3$ seeds ($N=5$ for OPT-125m 800s). On OPT-125m, the A-B gap shrinks from $\sim$83,000 at 50 steps to $\sim$7,000 at 800 steps---a $7.8\times$ shrinkage. On Qwen2.5-0.5B, the gap goes from $\sim$74,000 to $\sim$3,000---a $15.8\times$ shrinkage.
 
 The convergence is non-monotonic: the gap does not decrease smoothly but oscillates at ALS cycle boundaries. Protocol A exhibits CV=23--120\% across seeds, reflecting genuine training instability, while Protocol B achieves CV $<$ 5\% at all step counts. AdamW plateaus at 50--100 steps and shows negligible improvement thereafter; the residual gap at 800 steps is driven by ASP's slow convergence, not by AdamW's improvement.
+\begin{figure}[t]
+\centering
+\includegraphics[width=0.95\textwidth]{figures/fig2_convergence.pdf}
+\caption{\textbf{ASP-AdamW gap convergence trajectory ($N=3$--$5$ seeds per point).} (a) OPT-125m (12 layers): the gap shrinks $7.8\times$ from $\sim$83,000 at 50 steps to $\sim$7,000 at 800 steps. (b) Qwen2.5-0.5B (24 layers): the gap shrinks $15.8\times$. Error bars show 95\% bootstrap confidence intervals. The convergence is non-monotonic: oscillations at ALS cycle boundaries reflect the perturbation$\rightarrow$digestion$\rightarrow$re-perturbation cycle. The dashed green line marks the approximate crossover threshold (PPL gap $<$ 10).}
+\label{fig:convergence}
+\end{figure}
+
 
 Hedges' $g = 1.11$ at the 800-step measurement (OPT-125m, $N=5$ per group; 95\% CI [0.42, 1.80]) confirms a large effect size. With Bonferroni correction across the 5 tested time points ($\alpha' = 0.01$), the optimizer main effect remains significant at steps 100 ($p < 0.001$), 200 ($p = 0.017$), and 400 ($p = 0.012$). Power analysis (Table~\ref{tab:power}) indicates 6--26 seeds per group are needed for 80\% power depending on effect magnitude. Achieving CI width $<$ 20\% of the gap requires 6 seeds for AdamW (CV=23\%) but $\geq 62$ seeds for Protocol A (CV $\geq$ 80\%)---impractically large. The effect \textit{direction} is unambiguously established; the effect \textit{magnitude} has wide confidence intervals by necessity.
 
@@ -200,6 +214,13 @@ Hedges' $g = 1.11$ at the 800-step measurement (OPT-125m, $N=5$ per group; 95\% 
 \subsection{RQ3: AdamW Overfitting}
 
 A critical confound is that the A-B gap may reflect not only ASP's slow convergence but also AdamW's degradation due to overfitting. To test this, we run Protocol B on OPT-125m with varying training data sizes (400, 800, 1600 samples) at 200 and 400 steps. AdamW's eval loss consistently increases from 200 to 400 steps at all data sizes, indicating overfitting. The best AdamW result is achieved at 200 steps with 800 samples (eval loss=3.85, PPL=46.8). In contrast, ASP at 1200 steps maintains train\_loss $\approx$ eval\_loss $\approx$ 8.2---it does not overfit even at $3\times$ the training duration.
+\begin{figure}[t]
+\centering
+\includegraphics[width=0.95\textwidth]{figures/fig4_overfitting.pdf}
+\caption{\textbf{AdamW overfitting versus ASP implicit regularization (OPT-125m).} (a) AdamW training and evaluation loss at 200 and 400 steps across three data sizes (400, 800, 1600 training samples). Arrows indicate the direction of change from 200 to 400 steps: evaluation loss consistently \textit{increases} (overfitting) regardless of data size. (b) ASP train and eval loss trajectories through 1,200 steps. ASP maintains train$\approx$eval parity at all time points, while AdamW's training loss drops to near-zero (arrow indicates overfitting gap), with evaluation loss rising. The shaded region shows the AdamW overfitting gap. All data from the experiment described in \S5.4.}
+\label{fig:overfitting}
+\end{figure}
+
 
 \subsection{RQ4: Perturbation Effect}
 
@@ -232,6 +253,13 @@ The A-B gap at 100 steps scales superlinearly with depth across 8 architectures 
 ASP converges at $L \leq 24$ layers but diverges catastrophically at $L \geq 28$ layers. The critical depth $L^* \approx 26$ arises from the competition between ALS perturbation amplification and SGD recovery: $L_{\max} = \ln(\eta \mu_{\min} T_{\text{SGD}} / A_{\text{eff}}) / \ln \bar{\rho}$ where $\bar{\rho} \approx 1.08$ is the per-layer residual amplification factor, estimated by fitting the exponential gap decay model to OPT-125m (12L) and Qwen2.5-0.5B (24L).
 
 We made 11 attempts to train Protocol A on Qwen2.5-7B (28 layers) across two distributed backends (DeepSpeed ZeRO-2 and PyTorch FSDP FULL\_SHARD). All failed, confirming the depth boundary is algorithmic, not a hardware limitation.
+\begin{figure}[t]
+\centering
+\includegraphics[width=0.92\textwidth]{figures/fig3_depth.pdf}
+\caption{\textbf{Depth scaling of the ASP-AdamW gap across 8 architectures.} The A-B gap at 100 training steps (log scale) versus model depth $L$. Green circles denote converged models ($L \leq 24$); red crosses denote models where ASP diverges catastrophically ($L \geq 28$). The dashed red line marks the critical depth $L^* \approx 26$, derived from the residual perturbation amplification model ($\bar{\rho} \approx 1.08$). The depth boundary is a continuum: non-monotonic convergence at $L=12$ (confirmed by real Cholesky ALS on OPT-125m, \S6.9.2) evolves to complete divergence at $L \geq 28$.}
+\label{fig:depth}
+\end{figure}
+
 
 Protocol B was successfully trained on Qwen2.5-7B using DeepSpeed ZeRO-2 with DeepSpeedCPUAdam and CPU optimizer offload ($N=3$ seeds, 800 steps, 1600 WikiText-2 samples). Results: mean PPL $1.25 \pm 0.01$ (full test set validation with 298,938 tokens), with cross-seed CV $<$ 1\%. The fresh (untrained) Qwen2.5-7B baseline on the same full test set is PPL=133.16.
 
@@ -459,15 +487,14 @@ Critical condition: $\eta \mu_{\min} T_{\text{SGD}} > A_{\text{eff}} \bar{\rho}^
 
 PAC-Bayes bound (Dziugaite \& Roy, 2017): $\text{GenGap} \leq \sqrt{(\|\theta\|^2 + \log(1/\delta)) / (2\sigma^2_{\text{eff}} N)}$. ASP's $\sigma^2_{\text{eff}} \approx 780$ vs AdamW's $\sigma^2_{\text{AdamW}} \sim 10^{-6}$, yielding $55\times$ smaller train-eval gap.
 
-\section*{Appendix B: Figure Specifications}
+\section*{Appendix B: Figure List}
 
-\begin{itemize}
-\item \textbf{Figure 1}: $2\times2$ factorial design schematic---the attribution problem (confounded comparison) and four protocols resolving the confound.
-\item \textbf{Figure 2}: A-B gap convergence trajectory (OPT-125m and Qwen2.5-0.5B) with 95\% confidence bands and ALS cycle boundary markers.
-\item \textbf{Figure 3}: Depth scaling---scatter plot of A-B gap (log scale) vs number of layers for all 8 architectures, colored by convergence status.
-\item \textbf{Figure 4}: AdamW overfitting and ASP regularization---train vs eval loss trajectories with varying data sizes.
-\item \textbf{Figure 5}: Protocol C synergy test---bar chart comparing PPL with and without low-rank ALS.
-\end{itemize}
+Figures 1--5 appear in the main text at the following locations:
+Figure~\ref{fig:factorial} (\S3.2, Methodology: 2$\times$2 factorial design),
+Figure~\ref{fig:convergence} (\S5.3, ASP-AdamW convergence trajectory),
+Figure~\ref{fig:depth} (\S5.6, Depth scaling across 8 architectures),
+Figure~\ref{fig:overfitting} (\S5.4, AdamW overfitting and ASP regularization),
+Figure~\ref{fig:als_synergy} (\S5.8, Low-rank ALS synergy test).
 
 \section*{Appendix C: Review Traceability}
 
