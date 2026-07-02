@@ -399,7 +399,7 @@ results = simple_evaluate(
 
 ---
 
-## 六、核心实验发现总结
+## 六、评估标准 → [详见评估指南](docs/evaluation_guide.md)\n\n## 七、核心实验发现总结
 
 ### 6.1 秩充足律 (Rank Sufficiency Law)
 
