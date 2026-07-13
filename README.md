@@ -4,7 +4,7 @@
 >
 > Core finding: $r_{\min} = \eta \cdot L/d_h$ ($\eta \approx 230 \pm 8\%$) — an empirically calibrated, experimentally falsified, task-intrinsic rank sufficiency law for LoRA post-training.
 >
-> **Status**: Paper v3.4 — 17 experiments complete (P0-P5 + F1-F2 + A + E4 + Critical r=4 + E2 + X1-X3). Grok review passed (Minor Revision → Accept).
+> **Status**: Paper v3.4 — 17 experiments complete (P0-P5 + F1-F2 + A + E4 + Critical r=4 + E2 + X1-X3). Phase 1 finalization complete.
 
 ---
 

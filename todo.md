@@ -1,11 +1,11 @@
-# Project Status — v3.4 FINAL
+# Project Status — v3.4
 
-**Date**: 2026-06-25
-**Status**: ✅ Complete. 17 experiments done (P0-P5 + F1-F2 + A + E4 + Critical r=4 + E2 + X1-X3). Grok review cleared (Minor Revision → Accept). Paper v3.4 ready.
+**Date**: 2026-07-13
+**Status**: Phase 1 finalization complete. 17 experiments done (P0-P5 + F1-F2 + A + E4 + Critical r=4 + E2 + X1-X3). Paper v3.4 ready for venue formatting.
 
 ---
 
-## Completed (All Items) — 10 Experiments
+## Completed (All Items) — 17 Experiments
 
 ### P0-P5: Hypothesis Testing
 - [x] P0: Chinese WikiText — r=8 language-independent; η∝H falsified

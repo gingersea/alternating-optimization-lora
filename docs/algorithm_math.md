@@ -1,6 +1,8 @@
 # 四种 Post-Training 算法的数学基础
 
-本文档从纯数学公式的角度解释 ASP 和 LoRA 四种协议背后的算法原理。不涉及代码，只关注**目标函数、优化过程和参数更新规则**。
+> **Note**: This document describes the four protocols at the algorithmic level. For the current theoretical framework centered on the Rank Sufficiency Law ($r_{\min} = \eta \cdot L/d_h$), see [`asp_mathematical_formulation.md`](asp_mathematical_formulation.md).
+
+本文档从纯数学公式的角度解释 ASP 和 LoRA 四种协议背后的算法原理。
 
 ---
 

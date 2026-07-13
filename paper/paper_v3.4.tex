@@ -21,13 +21,13 @@
 \large A 2$\times$2 Factorial Study of Alternating Optimization vs Low-Rank Adaptation for LLM Post-Training}
 
 \author{[Authors to be determined]}
-\date{June 2026}
+\date{July 2026 \quad (v3.4)}
 
 \begin{document}
 \maketitle
 
 \begin{abstract}
-Post-training of large language models involves two independent design dimensions: how parameters are updated (optimizer) and what form the update takes (parameter structure). Comparing strategies across these dimensions conflates independent variables, rendering performance unattributable. We apply a rigorous $2\times 2$ factorial methodology crossing optimizer type (ASP: ALS+SGD+Perturbation vs AdamW) with parameter form (full-rank vs LoRA), evaluated under unified FLOPs accounting across 8 architectures spanning 12 to 32 layers including Qwen2.5-7B at GPU scale.
+Post-training of large language models involves two independent design dimensions: how parameters are updated (optimizer) and what form the update takes (parameter structure). Comparing strategies across these dimensions conflates independent variables, rendering performance unattributable. We apply a rigorous $2\times 2$ factorial methodology crossing optimizer type (ASP: ALS+SGD+Perturbation vs AdamW) with parameter form (full-rank vs LoRA), evaluated under unified FLOPs accounting across 8 architectures spanning 12 to 32 layers (GPT-2, OPT, TinyLlama, Qwen2.5, DeepSeek, SmolLM2, Mistral, and Qwen2.5-7B at GPU scale).
 
 Our findings establish five central conclusions. First, LoRA rank $r=8$ is sufficient for WikiText-2-style autoregressive post-training on all currently popular architectures ($L/d_h \leq 0.035$): $r=8$ matches $r=256$ within $\pm 0.02$ PPL across 5 model families, and this sufficiency is language-independent (Chinese/English), task-independent (SST-2 classification), and step-independent (100--1600 steps). Second, the widely reported ``full-rank beats LoRA'' result is a full-rank overfitting artifact---full-rank fine-tuning on 1,600 WikiText-2 samples produces near-perfect PPL (1.25) but \textit{reduces} downstream accuracy (HellaSwag: $-3.2$pp, MMLU: $-4.2$pp, ARC: $-3.3$pp), while LoRA matches baseline accuracy on all three tasks. Third, we derive a Rank Sufficiency Law $r_{\min} = \eta \cdot L/d_h$ with $\eta \approx 230$ for SmolLM2-class models and lower $\eta$ for well-pretrained models---the mechanism being per-layer representation quality modulated by pretraining compute, identified after systematically eliminating three alternative hypotheses (token entropy scaling, training budget scaling, universal constant). Fourth, ASP converges non-monotonically with a fundamental depth boundary at $\sim$26 layers beyond which ALS perturbation exceeds SGD recovery capacity, yet within the stable regime ($L \leq 24$) it provides implicit regularization against AdamW overfitting. Fifth, we introduce the M-index ($M = \text{PPL}_{\text{train}}/\text{PPL}_{\text{cross}}$) as a lightweight memorization diagnostic: $M < 1$ reliably flags the memorization regime into which full-rank always falls at practical data budgets.
 
@@ -46,7 +46,7 @@ Comparing ASP and LoRA faces a fundamental confound: ASP is an optimizer innovat
 
 \subsection{Contributions}
 
-Beyond the specific ASP-vs-LoRA comparison, this work's value is fourfold. \textit{Methodologically}, the $2\times 2$ factorial protocol is reusable: any pair of post-training strategies confounded by differing optimizers and parameter structures can be compared using this template, from adapter-based methods~\cite{houlsby2019parameter} to prompt tuning~\cite{lester2021power}. \textit{Practically}, our results provide actionable guidance---LoRA+AdamW is optimal at $\leq 800$ steps, early stopping prevents AdamW overfitting, and ASP's implicit regularization offers advantages in low-data regimes. \textit{Theoretically}, the non-monotonic convergence pattern, depth boundary derivation, and PAC-Bayes regularization analysis advance understanding of ALS-based optimization in deep networks. \textit{As negative results}, our finding that low-rank ALS consistently degrades Protocol C and that ASP diverges beyond $\sim$26 layers saves future researchers from unproductive investigation while precisely defining the scope of applicability.
+Beyond the specific ASP-vs-LoRA comparison, this work's value is fourfold. \textit{Methodologically}, the $2\times 2$ factorial protocol is reusable: any pair of post-training strategies confounded by differing optimizers and parameter structures can be compared using this template, from adapter-based methods~\cite{houlsby2019parameter} to prompt tuning~\cite{lester2021power}. \textit{Practically}, our results provide actionable guidance---LoRA+AdamW is optimal at $\leq 800$ steps, early stopping prevents AdamW overfitting, and ASP's implicit regularization offers advantages in low-data regimes. \textit{Theoretically}, the non-monotonic convergence pattern, depth boundary derivation, and residual perturbation amplification model advance understanding of ALS-based optimization in deep networks. \textit{As negative results}, our finding that low-rank ALS consistently degrades Protocol C and that ASP diverges beyond $\sim$26 layers saves future researchers from unproductive investigation while precisely defining the scope of applicability.
 
 This paper makes six contributions. First, we apply rigorous $2\times2$ factorial methodology crossing optimizer type (ASP vs AdamW) with parameter form (full-rank vs LoRA), under unified FLOPs accounting, enabling clean attribution of main effects and their interaction. Second, we validate the $2\times2$ matrix at 7B scale (3 of 4 cells): Protocol B (AdamW+full-rank, 7B parameters) achieves PPL $1.25 \pm 0.01$ ($N=3$ seeds) on the full WikiText-2 test set---an $8.3\times$ improvement over Protocol D (LoRA $r=8$, $\sim$3M parameters) and $106\times$ over the untrained model (PPL=133). Protocol A is blocked by the depth boundary, confirmed via 11 attempts across two distributed backends. Third, we present empirical evidence across eight architectures showing LoRA dominates at $\leq 200$ steps, with multi-seed replication ($N=3$--5) confirming the ASP-AdamW gap shrinks $7.8\times$ from 50 to 800 steps on OPT-125m (Hedges' $g=1.11$, $p<0.05$ with Bonferroni correction). Fourth, we discover non-monotonic ASP convergence and intrinsic instability (CV $23$--$120\%$ vs AdamW's $<5\%$). Fifth, we establish a depth boundary at $\sim26$ layers arising from ALS perturbation amplification exceeding SGD recovery capacity. Sixth, we characterize ASP's implicit regularization---maintaining train$\approx$eval loss at 1,200 steps while AdamW overfits at all tested data sizes.
 
@@ -119,7 +119,7 @@ We resolve this through a $2\times2$ factorial design, shown in Table~\ref{tab:p
 \end{figure}
 \noindent The comparisons A vs B and C vs D isolate the optimizer effect under full-rank and LoRA parameter forms respectively. Comparisons A vs C and B vs D isolate the parameter form effect under ASP and AdamW optimizers. The interaction term (A-B)-(C-D) captures whether the optimizer effect depends on parameter form.
 
-\textbf{Protocol C asymmetry.} Protocol C uses SGD+Perturbation alternation without ALS, since the current ALS solver operates on \texttt{nn.Linear} weight matrices and is not directly applicable to LoRA-parameterized layers (where weights take the form $W_{\text{base}} + (\alpha/r)BA$). This means Protocol C and Protocol A differ both in parameter form and in the presence/absence of the ALS phase. For the present study, Protocol C should be interpreted as ``ASP without ALS'' rather than ``full ASP on LoRA.''
+\textbf{Protocol C ALS.} We implement a low-rank ALS solver (Appendix~\ref{sec:appendix-derivations}) that solves the full-rank least-squares problem in effective-weight space $W_{\text{eff}} = W_0 + (\alpha/r)BA$, then projects the solution onto the LoRA parameter space via the minimum-norm B-update $\Delta B = (r/\alpha) \cdot \Delta W \cdot A^\top (A A^\top + \lambda I)^{-1}$. This closes the factorial symmetry: Protocol C can now include the ALS phase at all scales including 7B, eliminating the most significant methodological limitation of earlier versions. Across 7 independent comparisons, low-rank ALS consistently degrades rather than improves Protocol C---a robust negative result reported in \S5.8.
 
 \subsection{Unified Resource Accounting}
 
@@ -145,7 +145,7 @@ The default schedule uses ALS(1)$\rightarrow$SGD($k$)$\rightarrow$Perturb(1) for
 
 \subsection{Internal Component Confound}
 
-The ASP framework bundles three distinct mechanisms (ALS, SGD, perturbation) into a single ``optimizer type.'' The current $2\times2$ design cannot disentangle which component(s) drive the observed optimizer effects. Isolating component contributions would require a nested $2\times3$ factorial design and is left to future work.
+The ASP framework bundles three distinct mechanisms (ALS, SGD, perturbation) into a single ``optimizer type.'' The current $2\times2$ design cannot disentangle which component(s) drive the observed optimizer effects. The low-rank ALS solver (Appendix~\ref{sec:appendix-derivations}) enables an ALS-on/off ablation within Protocol C, partially addressing this confound: across 7 comparisons, adding ALS consistently degrades LoRA performance, identifying the ALS phase as the primary driver of negative synergy. Isolating the individual contributions of SGD and perturbation would require a nested factorial design and is left to future work.
 
 \section{Experiments}
 
@@ -161,7 +161,7 @@ Hardware: CPU (Intel Xeon) for models $\leq 1.1$B. Qwen2.5-7B experiments used 2
 
 \begin{table}[h]
 \centering
-\caption{$2\times2$ factorial results. PPL values for GPT-2/OPT/Qwen0.5B at 100 steps; Qwen2.5-7B at 800 steps. Protocol A blocked at 7B scale due to the depth boundary. Protocol C uses SGD+Perturbation only (no ALS).}
+\caption{$2\times2$ factorial results. PPL values for GPT-2/OPT/Qwen0.5B at 100 steps; Qwen2.5-7B at 800 steps. Protocol A blocked at 7B scale due to the depth boundary. Protocol C includes low-rank ALS (Appendix~\ref{sec:appendix-derivations}); dagger denotes the ALS phase is present but consistently degrades performance (\S5.8).}
 \label{tab:factorial}
 \begin{tabular}{@{}lllcccc@{}}
 \toprule
@@ -217,7 +217,7 @@ A critical confound is that the A-B gap may reflect not only ASP's slow converge
 \begin{figure}[t]
 \centering
 \includegraphics[width=0.95\textwidth]{figures/fig4_overfitting.pdf}
-\caption{\textbf{AdamW overfitting versus ASP implicit regularization (OPT-125m).} (a) AdamW training and evaluation loss at 200 and 400 steps across three data sizes (400, 800, 1600 training samples). Arrows indicate the direction of change from 200 to 400 steps: evaluation loss consistently \textit{increases} (overfitting) regardless of data size. (b) ASP train and eval loss trajectories through 1,200 steps. ASP maintains train$\approx$eval parity at all time points, while AdamW's training loss drops to near-zero (arrow indicates overfitting gap), with evaluation loss rising. The shaded region shows the AdamW overfitting gap. All data from the experiment described in \S5.4.}
+\caption{\textbf{AdamW overfitting versus ASP implicit regularization (OPT-125m).} (a) AdamW training and evaluation loss at 200 and 400 steps across three data sizes (400, 800, 1600 training samples). Arrows indicate the direction of change from 200 to 400 steps: evaluation loss consistently \textit{increases} (overfitting) regardless of data size. (b) ASP train and eval loss trajectories through 1,200 steps. ASP maintains train$\approx$eval parity at all time points, while AdamW's training loss drops to near-zero (arrow indicates overfitting gap), with evaluation loss rising. The shaded region shows the AdamW overfitting gap.}
 \label{fig:overfitting}
 \end{figure}
 
@@ -256,7 +256,7 @@ We made 11 attempts to train Protocol A on Qwen2.5-7B (28 layers) across two dis
 \begin{figure}[t]
 \centering
 \includegraphics[width=0.92\textwidth]{figures/fig3_depth.pdf}
-\caption{\textbf{Depth scaling of the ASP-AdamW gap across 8 architectures.} The A-B gap at 100 training steps (log scale) versus model depth $L$. Green circles denote converged models ($L \leq 24$); red crosses denote models where ASP diverges catastrophically ($L \geq 28$). The dashed red line marks the critical depth $L^* \approx 26$, derived from the residual perturbation amplification model ($\bar{\rho} \approx 1.08$). The depth boundary is a continuum: non-monotonic convergence at $L=12$ (confirmed by real Cholesky ALS on OPT-125m, \S6.9.2) evolves to complete divergence at $L \geq 28$.}
+\caption{\textbf{Depth scaling of the ASP-AdamW gap across 8 architectures.} The A-B gap at 100 training steps (log scale) versus model depth $L$. Green circles denote converged models ($L \leq 24$); red crosses denote models where ASP diverges catastrophically ($L \geq 28$). The dashed red line marks the critical depth $L^* \approx 26$, derived from the residual perturbation amplification model ($\bar{\rho} \approx 1.08$). The depth boundary is a continuum: non-monotonic convergence at $L=12$ (confirmed by real Cholesky ALS on OPT-125m, \S5.2) evolves to complete divergence at $L \geq 28$.}
 \label{fig:depth}
 \end{figure}
 
@@ -273,7 +273,7 @@ We evaluate Protocol B and D checkpoints (3 seeds each, 800 steps) on C4 web tex
 
 \subsection{Parameter-Matched LoRA Baseline}
 
-We run LoRA variants at ranks $r=8$, 16, 32, 64, 128, 256, and 512 on Qwen2.5-0.5B with identical AdamW training and WikiText-2 evaluation (800 samples, seq\_len=1024, batch=1, 100 steps, seed 42). Under matching configuration, $r=8$ already achieves PPL=1.62---indistinguishable from $r=256$ (PPL=1.61) and $r=512$ (PPL=1.64). Full-rank (494M parameters) achieves PPL=44.4, confirming overfitting even at 0.5B scale. The 20$\times$ gap between $r=8$ from Table~1 (PPL=32.2, different configuration) and $r \geq 16$ (PPL=1.60) is a configuration artifact: the Table~1 baseline used 1600 samples, seq\_len=2048, and batch=16 rather than the matching config. Under identical conditions, increasing rank provides zero benefit.
+We run LoRA variants at ranks $r=8$, 16, 32, 64, 128, 256, and 512 on Qwen2.5-0.5B with identical AdamW training and WikiText-2 evaluation (800 samples, seq\_len=1024, batch=1, 100 steps, seed 42). Under matching configuration, $r=8$ already achieves PPL=1.62---indistinguishable from $r=256$ (PPL=1.61) and $r=512$ (PPL=1.64). Full-rank (494M parameters) achieves PPL=44.4, confirming overfitting even at 0.5B scale. The 20$\times$ gap between $r=8$ from Table~\ref{tab:factorial} (PPL=32.2, different configuration) and $r \geq 16$ (PPL=1.60) is a configuration artifact: the Table~\ref{tab:factorial} baseline used 1600 samples, seq\_len=2048, and batch=16 rather than the matching config. Under identical conditions, increasing rank provides zero benefit.
 
 Cross-architecture validation on five model families (identical configuration) confirms: $r=8$ is at the plateau with $r8/r256 \leq 1.10$ for 4/5 models. SmolLM2-135M ($r8/r256=1.83$) is the sole exception. The SST-2 classification rank curve ($r=4,8,32$ on Qwen2.5-0.5B) further confirms the plateau extends to accuracy tasks: all three ranks achieve identical accuracy (84.7\%, 739/872).
 
@@ -382,11 +382,11 @@ The derivation of $r \propto L/d_h$ relies on three assumptions: (1) per-layer p
 
 ASP underperforms at low steps due to three factors: ALS loss magnitude ($\sim10^5$), cross-layer coupling violation, and momentum reset. The net effect is that 50--150 SGD steps are consumed merely returning the model to its pre-ALS loss level. ASP may have advantages in low-data regimes (implicit regularization), parallel training (independent ALS blocks), and very large training budgets---but only within the stable depth regime ($L \leq 24$).
 
-Our primary limitations are: (1) the ASP-AdamW crossover at $>1,000$ steps is directionally confirmed (GPT-2) but full Cholesky ALS validation on an \texttt{nn.Linear} model remains pending; (2) Protocol A is blocked at 7B scale by the depth boundary, preventing interaction effect computation; (3) full-rank near-perfect PPL (1.25) at 7B is demonstrated to reflect memorization; (4) the M-index is scale-dependent; (5) the $\eta$ mechanism is identified as pretraining quality but the quantitative relationship $q(N_{\text{pretrain}})$ requires further calibration.
+Our primary limitations are: (1) the ASP-AdamW crossover at $>1,000$ steps is directionally confirmed (GPT-2) but full Cholesky ALS validation on an \\texttt{nn.Linear} model remains pending; (2) Protocol A is blocked at 7B scale by the depth boundary, preventing full interaction effect computation at scale---Protocol C now includes ALS at all scales (Appendix~\\ref{sec:appendix-derivations}) but the 7B interaction term (A-B)-(C-D) remains uncomputable without Protocol A; (3) full-rank near-perfect PPL (1.25) at 7B is demonstrated to reflect memorization; (4) the M-index is scale-dependent; (5) the $\\eta$ mechanism is identified as pretraining quality but the quantitative relationship $q(N_{\\text{pretrain}})$ requires further calibration.
 
 \section{Conclusion}
 
-We presented a $2\times2$ factorial methodology for disentangling optimizer and parameter form effects in LLM post-training, validated across 14 hypothesis-driven experiments. Five central conclusions emerge:
+We presented a $2\times2$ factorial methodology for disentangling optimizer and parameter form effects in LLM post-training, validated across 17 hypothesis-driven experiments. Five central conclusions emerge:
 
 \begin{enumerate}[leftmargin=*]
 \item \textbf{The Rank Sufficiency Law} $r_{\min} = \eta \cdot L/d_h$ ($\eta$ modulated by pretraining quality) predicts $r=8$ is sufficient for WikiText-2-style post-training on all currently popular architectures ($L/d_h \leq 0.035$). The plateau is confirmed across languages, classification tasks, and training horizons. Three alternative mechanisms for $\eta$ have been experimentally falsified.
@@ -468,6 +468,7 @@ This work spans 17 hypothesis-driven experiments across 8 architectures and 5 mo
 \end{thebibliography}
 
 \section*{Appendix A: Mathematical Derivations}
+\label{sec:appendix-derivations}
 
 \subsection*{A.1 ALS Reconstruction Loss Magnitude}
 
@@ -484,10 +485,6 @@ Gap as superposed decaying perturbations: $\text{gap}(t) = \Delta\mathcal{L}^* +
 \subsection*{A.4 Depth Boundary}
 
 Critical condition: $\eta \mu_{\min} T_{\text{SGD}} > A_{\text{eff}} \bar{\rho}^L$. Maximum stable depth: $L_{\max} \approx 26$, matching the empirical boundary ($L \leq 24$ converges, $L \geq 28$ diverges).
-
-\subsection*{A.5 ASP Implicit Regularization}
-
-PAC-Bayes bound (Dziugaite \& Roy, 2017): $\text{GenGap} \leq \sqrt{(\|\theta\|^2 + \log(1/\delta)) / (2\sigma^2_{\text{eff}} N)}$. ASP's $\sigma^2_{\text{eff}} \approx 780$ vs AdamW's $\sigma^2_{\text{AdamW}} \sim 10^{-6}$, yielding $55\times$ smaller train-eval gap.
 
 \section*{Appendix B: Figure List}
 
