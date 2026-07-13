@@ -54,13 +54,19 @@ This paper makes six contributions. First, we apply rigorous $2\times2$ factoria
 
 \subsection{Alternating Optimization for Neural Networks}
 
-Block Coordinate Descent (BCD) and Alternating Direction Method of Multipliers (ADMM;~\cite{boyd2011distributed}) have been explored as alternatives to backpropagation. Zeng et al.~\cite{zeng2019global} established global convergence of BCD to critical points at rate $\mathcal{O}(1/k)$ under the Kurdyka-Łojasiewicz inequality. Wang et al.~\cite{wang2018accelerated} proposed mDLAM with linear convergence via Nesterov acceleration. Choromanska et al.~\cite{choromanska2019beyond} introduced stochastic alternating minimization (AM-Adam, AM-mem). Bolte et al.~\cite{bolte2014proximal} developed the Proximal Alternating Linearized Minimization (PALM) framework.
+Block Coordinate Descent (BCD) and Alternating Direction Method of Multipliers (ADMM;~\cite{boyd2011distributed}) have been explored as alternatives to backpropagation. BAdam~\cite{luo2024badam} pioneered BCD for LLMs by partitioning model parameters into per-layer blocks and applying Adam updates block-wise, demonstrating feasibility on Llama 3-8B and 70B. Landscape-expanded BCD~\cite{luo2025accelerating} further addresses BCD inefficiencies via block unfreezing. BlockLLM~\cite{blockllm2025} selects parameter subsets based on gradient norm importance. ABSignSGD~\cite{absignsgd2026} replaces Adam with SignSGD in BCD, proposing that BCD+Adam is inherently incompatible. FOCUS~\cite{focus2025} combines BCD with zeroth-order second-order information. AltLoRA~\cite{almansoori2025altlora} applies alternating projection to LoRA gradient approximation, the closest alternating method to our full-rank ALS approach. LORSUM~\cite{almansoori2026lorsum} casts LoRA optimization as a proximal subproblem solved via ALS updates, providing theoretical connections to block power methods. SALAAD~\cite{ma2026salaad} applies an ADMM-style augmented Lagrangian framework to induce sparse+low-rank LLM structure at pretraining scale.
 
-However, existing BCD/ADMM methods have demonstrated limited scalability to modern transformer architectures. The convergence guarantees cited above were established under assumptions (Lipschitz activations, layer-wise convexity) that do not directly apply to transformers. Furthermore, BCD optimizes layer-wise objectives that ignore cross-layer coupling---when layer $l$'s weights are updated, layers $l+1, \ldots, L$'s optimal values shift, but BCD treats them as fixed. This \textit{ALS distribution shift problem} is the central challenge our work quantifies.
+Zeng et al.~\cite{zeng2019global} established global convergence of BCD to critical points at rate $\mathcal{O}(1/k)$ under the Kurdyka-Łojasiewicz inequality. Wang et al.~\cite{wang2018accelerated} proposed mDLAM with linear convergence via Nesterov acceleration. Choromanska et al.~\cite{choromanska2019beyond} introduced stochastic alternating minimization (AM-Adam, AM-mem). Bolte et al.~\cite{bolte2014proximal} developed the Proximal Alternating Linearized Minimization (PALM) framework.
+
+However, none of these methods combine a full-rank ALS phase with SGD and perturbation in an alternating cycle as ASP does. Existing BCD/ADMM methods have demonstrated limited scalability to modern transformer architectures. The convergence guarantees cited above were established under assumptions (Lipschitz activations, layer-wise convexity) that do not directly apply to transformers. Furthermore, BCD optimizes layer-wise objectives that ignore cross-layer coupling---when layer $l$'s weights are updated, layers $l+1, \ldots, L$'s optimal values shift, but BCD treats them as fixed. This \textit{ALS distribution shift problem} is the central challenge our work quantifies.
 
 \subsection{LoRA and Low-Rank Training Dynamics}
 
-LoRA~\cite{hu2022lora} constrains weight updates to $\Delta W = (\alpha/r)BA$. The convergence of LoRA gradient descent was recently analyzed at rate $\mathcal{O}(1/\log T)$ without boundedness assumptions~\cite{anonymous2025convergence}. Balanced initialization yields optimal conditioning (BaLoRA). Kim et al.~\cite{kim2025lora} showed LoRA converges to low-rank global minima in generic regimes. Aghajanyan et al.~\cite{aghajanyan2021intrinsic} demonstrated that the intrinsic dimensionality of fine-tuning explains LoRA's effectiveness. Liu et al.~\cite{liu2024dora} proposed DoRA, decomposing weights into magnitude and direction. Dettmers et al.~\cite{dettmers2024qlora} introduced QLoRA for memory-efficient fine-tuning of quantized models. Malladi et al.~\cite{malladi2023fine} showed that zeroth-order optimization can fine-tune LLMs using only forward passes. Lialin et al.~\cite{lialin2023scaling} provided a comprehensive survey of parameter-efficient fine-tuning methods.
+LoRA~\cite{hu2022lora} constrains weight updates to $\Delta W = (\alpha/r)BA$. The convergence of LoRA gradient descent was recently analyzed at rate $\mathcal{O}(1/\log T)$ without boundedness assumptions~\cite{anonymous2025convergence}. Balanced initialization yields optimal conditioning (BaLoRA). Kim et al.~\cite{kim2025lora} showed LoRA converges to low-rank global minima in generic regimes. Aghajanyan et al.~\cite{aghajanyan2021intrinsic} demonstrated that the intrinsic dimensionality of fine-tuning explains LoRA's effectiveness.
+
+Recent work studies LoRA rank from three complementary perspectives. \textit{Optimization landscape} analyses derive rank thresholds for absence of spurious local minima: Jang et al.\ establish $r(r+1)/2 > KN$, and Park~\cite{park2026rethinking} sharpens this to $r(m+n) - r^2 > C^* KN$ with $C^* \approx 1.35$. \textit{Data-dependent intrinsic dimensionality} approaches connect rank to task complexity: GeLoRA~\cite{eddib2025gelora} bounds $r_i \geq \max(d_{i+1} - d_i, 0)$ using TwoNN-estimated intrinsic dimensions, and LottaLoRA~\cite{hazan2026lottalora} defines $r^*(\varepsilon)$ as the smallest rank satisfying $L_{\text{LoRA}}(r) \leq L_{\text{full}} + \varepsilon$. \textit{Expressivity} results~\cite{zeng2024expressive} give rank requirements for exact function representation. In contrast, our Rank Sufficiency Law $r_{\min} = \eta \cdot L/d_h$ is derived from \textit{architectural parameters alone} ($L, d_h$), yielding a testable prediction with a fitted constant $\eta \approx 230$ that is independent of task-specific measurements.
+
+Liu et al.~\cite{liu2024dora} proposed DoRA, decomposing weights into magnitude and direction. Dettmers et al.~\cite{dettmers2024qlora} introduced QLoRA for memory-efficient fine-tuning of quantized models. Malladi et al.~\cite{malladi2023fine} showed that zeroth-order optimization can fine-tune LLMs using only forward passes. Lialin et al.~\cite{lialin2023scaling} provided a comprehensive survey of parameter-efficient fine-tuning methods.
 
 \subsection{Perturbation-Based Generalization}
 
@@ -77,8 +83,10 @@ Taylor et al.~\cite{taylor2016training} & ADMM & Small CNNs & No & Batch only \\
 Zeng et al.~\cite{zeng2019global} & BCD & Small MLPs & No & $\mathcal{O}(1/k)$ to critical point \\
 Wang et al.~\cite{wang2018accelerated} & mDLAM & Small MLPs & No & Multi-convexity assumption \\
 Choromanska et al.~\cite{choromanska2019beyond} & AM-Adam & Small CNNs & No & Matches SGD only \\
-OPLoRA (2025) & Alternating & LoRA LLMs & No & Optimizer-only factor \\
-Fast Forward (2024) & Line search & LoRA LLMs & No & Fails full-rank \\
+BAdam~\cite{luo2024badam} & BCD+Adam & Llama 8B/70B & No & Per-layer blocks, no perturbation \\
+AltLoRA~\cite{almansoori2025altlora} & Alt. projection & LoRA LLMs & No & LoRA-constrained only \\
+LORSUM~\cite{almansoori2026lorsum} & ALS proximal & LoRA LLMs & No & LoRA-constrained only \\
+BlockLLM~\cite{blockllm2025} & BCD selection & Llama & No & Dynamic block selection \\
 \textbf{This work} & \textbf{ASP} & \textbf{8 archs, 12--32L} & \textbf{Yes ($2\times2$)} & \textbf{Depth boundary $\geq 28$L} \\
 \bottomrule
 \end{tabular}
@@ -348,6 +356,13 @@ r_{\min} = \eta_0 \cdot \frac{L}{d_h} \cdot q^{-1}(N_{\text{pretrain}})
 \end{equation}
 where $\eta_0 \approx 150$ for strong-pretraining models and $q^{-1} > 1$ for weaker pretraining.
 
+\begin{figure}[t]
+\centering
+\includegraphics[width=0.95\textwidth]{figures/fig6_nomogram.pdf}
+\caption{\textbf{Universal $\eta$ nomogram for LoRA rank selection.} (a) $\eta$ as a function of $L/d_h$ for different pretraining budgets $N_{\text{pretrain}}$ (in trillions of tokens). Black-outlined points show the 7 calibration architectures. The dashed red line marks $\eta \approx 230$ (baseline for moderately-pretrained models); the dotted orange line marks $\eta_0 \approx 150$ (strong-pretraining floor). (b) Predicted $r_{\min}$ for 14 popular architectures. Green bars indicate $r_{\min} \leq 8$ (standard LoRA sufficient); red bars indicate $r_{\min} > 8$ (higher rank recommended). Only SmolLM2-135M ($L/d_h = 0.0521$, 2T pretraining tokens) requires $r > 8$.}
+\label{fig:nomogram}
+\end{figure}
+
 \subsection{Falsification Results}
 
 Table~\ref{tab:falsify} summarizes all tested predictions from the unified theory.
@@ -465,6 +480,30 @@ This work spans 17 hypothesis-driven experiments across 8 architectures and 5 mo
 
 \bibitem{lester2021power} B.~Lester et al. ``The Power of Scale for Parameter-Efficient Prompt Tuning.'' \textit{EMNLP}, 2021.
 
+\bibitem{ma2026salaad} H.~Ma et al. ``SALAAD: Sparse And Low-Rank Adaptation via ADDM for LLM Inference.'' \textit{ICML}, 2026.
+
+\bibitem{park2026rethinking} J.~Park. ``Rethinking the Rank Threshold for LoRA Fine-Tuning.'' arXiv:2605.03724, 2026.
+
+\bibitem{eddib2025gelora} A.~Ed-dib et al. ``GeLoRA: Geometric Adaptive Ranks for Low-Rank Adaptation.'' \textit{EMNLP Findings}, 2025.
+
+\bibitem{hazan2026lottalora} E.~Hazan et al. ``A Little Rank Goes a Long Way: Random Scaffolds with LoRA Adapters Are All You Need.'' arXiv:2604.08749, 2026.
+
+\bibitem{zeng2024expressive} Z.~Zeng \& J.~Lee. ``The Expressive Power of Low-Rank Adaptation.'' \textit{ICLR}, 2024.
+
+\bibitem{blockllm2025} BlockLLM. ``BlockLLM: Memory-Efficient Adaptation with Block Coordinate Descent.'' \textit{ICLR}, 2025.
+
+\bibitem{focus2025} FOCUS. ``FOCUS: Block Coordinate Descent with Second-Order Information.'' \textit{ICLR}, 2025.
+
+\bibitem{absignsgd2026} ABSignSGD. ``Arbitrary-Order Block SignSGD for Memory-Efficient LLM Fine-Tuning.'' \textit{ICLR}, 2026.
+
+\bibitem{luo2024badam} Q.~Luo et al. ``BAdam: A Memory-Efficient Full-Parameter Training Method for Large Language Models.'' \textit{NeurIPS}, 2024.
+
+\bibitem{luo2025accelerating} Q.~Luo et al. ``Accelerating Block Coordinate Descent for LLM Finetuning via Landscape Expansion.'' \textit{NeurIPS}, 2025.
+
+\bibitem{almansoori2025altlora} M.~Almansoori et al. ``AltLoRA: Alternating Projection Method for Efficient LLM Fine-Tuning.'' \textit{NeurIPS}, 2025.
+
+\bibitem{almansoori2026lorsum} M.~Almansoori et al. ``LORSUM: Proximal Subspace Iteration for Low-Rank Adaptation.'' arXiv:2602.16456, 2026.
+
 \end{thebibliography}
 
 \section*{Appendix A: Mathematical Derivations}
@@ -488,12 +527,13 @@ Critical condition: $\eta \mu_{\min} T_{\text{SGD}} > A_{\text{eff}} \bar{\rho}^
 
 \section*{Appendix B: Figure List}
 
-Figures 1--5 appear in the main text at the following locations:
+Figures 1--6 appear in the main text at the following locations:
 Figure~\ref{fig:factorial} (\S3.2, Methodology: 2$\times$2 factorial design),
 Figure~\ref{fig:convergence} (\S5.3, ASP-AdamW convergence trajectory),
 Figure~\ref{fig:depth} (\S5.6, Depth scaling across 8 architectures),
 Figure~\ref{fig:overfitting} (\S5.4, AdamW overfitting and ASP regularization),
-Figure~\ref{fig:als_synergy} (\S5.8, Low-rank ALS synergy test).
+Figure~\ref{fig:als_synergy} (\S5.8, Low-rank ALS synergy test),
+Figure~\ref{fig:nomogram} (\S6.6, Universal $\eta$ nomogram).
 
 \section*{Appendix C: Review Traceability}
 
