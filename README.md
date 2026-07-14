@@ -4,7 +4,7 @@
 >
 > A unified evaluation framework for comparing post-training strategies. Core question: can the ALS-SGD-Perturbation (ASP) alternating protocol be a superior post-training optimizer compared to the dominant LoRA+AdamW paradigm?
 >
-> **状态**: 论文 v0.7 — Round 6 对抗评审结论为 **Major Revision**  
+> **状态**: 论文 v0.7 — Round 6 对抗评审结论为 **Major Revision**
 > **Phase B 完成**: Qwen2.5-7B full-rank 3/3 seeds, PPL 1.25 ± 0.01  
 > **实验注册表**: [docs/experiment-registry.md](docs/experiment-registry.md) — 全 5 架构, 8 模型, 50-800 步  
 > **当前路线图**: [todo.md](todo.md) — 证据审计、参数量匹配与下游评估优先
