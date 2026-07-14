@@ -31,7 +31,7 @@
 
 | 版本 | 日期 | 评审决策 |
 |------|------|---------|
-| **[v0.7](paper/paper_draft_v0.2.md)** (current; legacy filename) | 06-20 | Round 6: Major Revision |
+| **[v0.7](paper/paper_draft_v0.2.md)** (current content retained in legacy `v0.2` filename) | 06-20 | Round 6: Major Revision |
 | [v0.4](paper/paper_draft_v0.2.md) | 06-13 | +Round 8-9 findings |
 | [v0.3](paper/paper_draft_v0.2.md) | 06-12 | Round 2 Minor Revision fixes |
 | [v0.1](paper/paper_draft_v0.1.md) | 06-12 | Round 1 Major Revision |
@@ -330,7 +330,8 @@ python experiments/analysis.py logs/
 | **研究定位** | 严谨负结果 + 深度相关失稳 + 可复用比较协议 |
 
 - [x] 2×2 析因框架 (评审公认核心贡献)
-- [x] 注册表记录 8 个实测架构（4 个 ≤24L 收敛，4 个 ≥28L 失稳；论文计数待修正）
+- [x] 注册表记录 8 个实测架构（4 个 ≤24L 收敛，4 个 ≥28L 失稳）
+- [ ] 将论文中“9 architectures”修正为 8 个实测架构 + 1 个预测
 - [x] 多 seed 统计 (N=3-5, PB ANOVA, Fieller CI)
 - [x] 非单调收敛 + ASP 隐式正则化
 - [x] 深度边界发现 (4/4 架构 ≥28L 发散, 数学建模)

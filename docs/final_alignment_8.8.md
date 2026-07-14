@@ -1,6 +1,6 @@
 # Final Alignment: 8.8/10
 
-> **Superseded snapshot**: This score predates the Round 6 Major Revision and includes a predicted Llama-2-7B result that was not experimentally validated. It must not be used as the current project assessment; see [`../todo.md`](../todo.md).
+> **Superseded snapshot (2026-06-14)**: This score predates the Round 6 Major Revision and includes a predicted Llama-2-7B result that was not experimentally validated. It must not be used as the current project assessment; see [`../todo.md`](../todo.md).
 
 ## Depth Scaling (8 architectures)
 
