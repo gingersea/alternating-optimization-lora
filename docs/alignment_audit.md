@@ -1,5 +1,7 @@
 # 工作成果与初衷切合度评估
 
+> **历史快照（2026-06-20）**：本审计早于 Round 6 的 Major Revision 结论。当前状态与证据边界以 [`../todo.md`](../todo.md) 为准。
+
 **日期**: 2026-06-20（Phase B 更新）
 **评估对象**: Alternating Optimization Framework vs LoRA 项目全周期
 

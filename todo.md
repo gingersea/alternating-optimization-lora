@@ -1,90 +1,121 @@
-# Qwen2.5-7B 2×2 Factorial — Complete Work Plan
+# 高价值研究路线图
 
-**Date**: 2026-06-20
-**Status**: Phase A (Protocol C+D) ✅ → Phase B (Protocol B full-rank) ✅ → Phase C (analysis + push) 🔄
+**更新日期**: 2026-07-14
+**当前判定**: **Major Revision**。项目已形成有价值的负结果、深度边界观察和资源归一化框架，但距离可发表的高价值工作仍有三项决定性差距：证据可审计性、参数量混杂、任务级泛化证据。
 
----
-
-## Phase A: Protocol C+D (LoRA) — ✅ DONE (2026-06-20 ~05:00)
-
-- [x] Fix LoRALayer device alignment
-- [x] Fix Protocol C ALS strip for LoRA
-- [x] Fix LoRALayer dtype=bf16
-- [x] Fix Protocol D PeftBridge device_map
-- [x] Run Protocol C × 3 seeds × 800 steps — PPL 135.36 ± 9.1
-- [x] Run Protocol D × 3 seeds × 800 steps — PPL 10.41 ± 0.01
-- [x] Push results to GitHub
+> 本文件是当前状态与优先级的唯一入口。历史评分文档作为时间快照保留，不代表当前结论。
 
 ---
 
-## Phase B: Protocol B Full-Rank — ✅ DONE (2026-06-20 ~18:30)
+## 1. 现状评估
 
-### B1-B2: Environment
-- [x] CUDA driver upgraded to 595.71.05
-- [x] bitsandbytes libnvJitLink.so.13 LD_LIBRARY_PATH fix
-- [x] DeepSpeed 0.19.2 + DS_SKIP_CUDA_CHECK=1
-- [x] DeepSpeedCPUAdam + CPU optimizer offload
-- [x] OpenMPI installed (libopenmpi-dev)
+### 已有的高价值核心
 
-### B3-B5: Protocol B Experiment
-- [x] Run Protocol B (AdamW+full-rank) × 3 seeds × 800 steps
-- [x] Seed 42: PPL 1.25, 54min
-- [x] Seed 123: PPL 1.24, 54min
-- [x] Seed 456: PPL 1.25, 52min
-- [x] **Mean PPL: 1.25 ± 0.01**
+- **可复用的比较框架**：用优化器 × 参数化形式组织对照，并统一核算 FLOPs、显存和时间。
+- **有信息量的负结果**：ASP 在已测预算内几乎始终弱于 AdamW；低秩 ALS 未显示协同收益。
+- **深度相关失稳现象**：已观察的 8 个架构中，4 个 ≤24 层模型收敛，4 个 ≥28 层模型失稳。
+- **工程资产**：多 seed、资源计量、DeepSpeed/FSDP 尝试记录和 115 项测试构成良好的复现基础。
 
-### B6: Protocol A Attempts (6 rounds, all failed)
-- [x] v1-v2: device_map="auto" OOM
-- [x] v3-v4: DeepSpeed + 8-bit AdamW → ZeRO compatibility issues
-- [x] v5: CPU offload + fp32 AdamW → DeepSpeedCPUAdam required
-- [x] v6: DeepSpeedCPUAdam → CUDA 12.8/13.0 mismatch
-- [x] v7: DS_SKIP_CUDA_CHECK → intermediate-layer ALS hallucinates (‖ΔW‖/‖W‖ > 10⁶)
-- [x] v8: lm_head-only ALS → SGD optimizer DeepSpeed incompatibility
-- [x] **Root cause confirmed**: single-process DeepSpeed can't shard model params
-- [x] ALS depth-boundary fixes applied to code (not tested on 7B)
+### 距离高价值论文的关键差距
 
----
-
-## Phase C: Analysis & Publication — 🔄 IN PROGRESS
-
-### C1: Documentation
-- [x] Experiment registry (`docs/experiment-registry.md`) — full inventory
-- [x] Updated alignment audit (`docs/alignment_audit.md`) — v2026-06-20
-- [x] Updated README — Phase B results + status
-- [x] Updated todo.md
-
-### C2: Git
-- [x] Commit ALS depth-boundary fixes
-- [x] Commit experiment runner scripts
-- [x] Commit results (JSON)
-- [ ] Push to GitHub
-
-### C3: Next Actions (ranked)
-1. OPT-125m Protocol A @ 704s (complete 4/4 in small model)
-2. 7B Protocol A' (SGD+Perturb, no ALS) as approximate opt comparison
-3. Fix eval sample size (N_EVAL=200 → full test set)
-4. Update paper draft v0.6
-
----
-
-## 2×2 Factorial Matrix
-
-| | AltOpt (ASP) | AdamW |
+| 优先级 | 差距 | 为什么阻塞 |
 |---|---|---|
-| **LoRA** | C: 135.36 ± 9.1 ✅ | D: 10.41 ± 0.01 ✅ |
-| **Full-rank** | A: blocked ❌ | **B: 1.25 ± 0.01** ✅ |
-
-### Key Metrics
-- **B vs D**: 8.3× improvement (full-rank >> LoRA)
-- **D vs C**: 13.0× improvement (AdamW >> AltOpt on LoRA)
-- **Fresh baseline**: PPL 105.56 (same eval set)
-- **A-B interaction**: not computable on 7B
-
-### Cross-Architecture
-- **5 architectures**: GPT-2, OPT-125m, TinyLlama, Qwen-0.5B, Qwen2.5-7B
-- **Depth boundary**: ≤24L converges, ≥28L diverges (4/4 confirmed)
-- **A-B gap scaling**: ∝ exp(0.077·L), superlinear
+| **P0** | 证据与文稿不可完全追溯 | 文稿声称 9 个架构，但第 9 个 Llama-2-7B 仅为预测；评估脚本约定生成的 `runs/qwen25_7b_800s/full_test_eval.json` 未被仓库跟踪，文稿却声称完整测试集验证；7B Protocol B 原始结果也未进入实验注册表数据文件。 |
+| **P0** | 7B 的“参数形式主导”被参数量混杂 | Full-rank 与 rank-8 LoRA 的可训练参数量相差约三个数量级，8.3× PPL 差异不能归因为秩结构本身。 |
+| **P0** | 缺少协议级下游评估 | 当前 HellaSwag 只有预训练 Mistral 基线，不能证明 B/D 或 ASP/AdamW 的任务泛化差异。 |
+| **P1** | 2×2 并非严格析因 | Protocol C 在主要结果中是 SGD+Perturb，而 Protocol A 含 ALS；交互项同时混入 ALS 是否存在。 |
+| **P1** | 统计与结论强度不匹配 | 多时间点比较未校正，部分效应仅来自单点或少量 seed；深度阈值机制仍是解释性假设而非因果验证。 |
+| **P2** | 外部有效性不足 | 数据仅限 WikiText-2，长预算交叉点和跨数据集的隐式正则化尚未验证。 |
 
 ---
 
-*Last updated: 2026-06-20*
+## 2. P0：先建立可信证据链
+
+### P0.1 数据审计与可复现包
+
+- [ ] 为每个论文主张建立 `claim → run → config → checkpoint/result → figure/table` 映射。
+- [ ] 恢复或重新生成并纳入版本控制的 7B 完整测试集汇总；若无法恢复，删除“full test set validated”表述。
+- [ ] 将 Protocol B 三个 seed 的机器可读原始结果加入统一 registry，并记录 commit、环境、数据切分和评估 token 数。
+- [ ] 修正论文及汇总文档的架构计数（对应“1. 现状评估 → 距离高价值论文的关键差距”首项）：统一为 **8 个实测架构**；Llama-2-7B 仅标为预测，不计入验证数量。
+- [ ] 将当前 v0.7 草稿从历史文件名 `paper_draft_v0.2.md` 迁移到一致的版本化文件名，并更新全部内部链接。
+- [ ] 统一 baseline PPL、N_EVAL=200 与完整测试集三套数字，禁止跨评估集直接计算比率。
+- [ ] 建立结果状态标签：`observed`、`replicated`、`inferred`、`predicted`。
+
+**完成门槛**：论文中每个核心数字都能从仓库内机器可读产物复算，且不存在评估集、架构数或协议定义冲突。
+
+### P0.2 两个最高信息增益实验
+
+- [ ] **协议级 HellaSwag**：在同一 harness、同一 checkpoint 选择规则下评估 Qwen2.5-7B Protocol B 与 D，并同时报告预训练基线。
+- [ ] **参数量匹配对照**：在可承受模型上比较 full-rank、不同 rank LoRA 和等可训练参数的结构化基线；固定优化器、token、FLOPs 与数据切分。
+- [ ] 为两个实验预注册主指标、停止规则、seed、失败判据和最小有意义效应。
+
+**完成门槛**：
+1. 能判断 PPL 优势是否转化为下游优势；
+2. 能把“参数量效应”与“低秩结构效应”分开，或明确承认无法分开。
+
+### P0.3 立即收缩文稿主张
+
+- [ ] 将“parameter form dominates”改为“更多可训练参数带来更强的 WikiText-2 内分布拟合”，直到参数匹配实验完成。
+- [ ] 将“2×2 factorial”改为“quasi-factorial comparison”，明确 Protocol C 的 ALS 不对称。
+- [ ] 将“depth boundary at 26”改为“在当前实现与调度下观察到 24–28 层之间的失稳转变”。
+- [ ] 删除 “Acceptance-ready” 和自评分式宣传；以 Round 6 的 **Major Revision** 为当前状态。
+- [ ] 修复论文中的架构计数、缺失 Appendix D、表格顺序、ANOVA 命名和配置差异。
+
+---
+
+## 3. P1：把负结果升级为机制贡献
+
+### P1.1 严格组件归因
+
+- [ ] 在稳定的小模型上做 ALS / SGD / Perturb 的嵌套消融，而不是把三者绑定为单一因子。
+- [ ] 使用已实现的 low-rank ALS 重新定义并验证对称 Protocol C；旧的 SGD+Perturb 结果单独命名。
+- [ ] 报告多 seed 的主效应、交互效应、置信区间和多重比较校正。
+
+### P1.2 深度失稳的可证伪机制实验
+
+- [ ] 在同一模型族内改变深度，避免把层数与架构、参数量混在一起。
+- [ ] 干预 ALS 更新范数、层位置、阻尼和 SGD 恢复步数，检验残差放大解释是否预测失稳。
+- [ ] 记录每层激活漂移、谱范数、更新比率和恢复时间，而不只记录最终 PPL/NaN。
+- [ ] 仅在预注册预测跨模型成立后，给出阈值或标度律结论。
+
+### P1.3 复核“隐式正则化”
+
+- [ ] 在至少两个数据集、多个数据规模和多个 seed 上复现 train–eval gap。
+- [ ] 加入 early-stopped AdamW、weight decay、dropout 和扰动强度匹配基线。
+- [ ] 区分“优化更慢”与“真正更好泛化”，以最佳验证 checkpoint 而非固定终点比较。
+
+---
+
+## 4. P2：高风险 / 高回报脑暴池
+
+以下方向只有在 P0 完成后才值得投入：
+
+1. **安全 ALS 控制器**：根据激活漂移与谱增益自适应决定跳过、阻尼或回滚 ALS，而不是固定周期执行。
+2. **预算条件化方法选择器**：预测在模型深度、数据量、可训练参数和算力预算下应选择 LoRA、full-rank AdamW 或禁用 ALS。
+3. **负结果基准套件**：把 8 架构失稳矩阵、11 次 7B 尝试和统一资源核算整理成 alternating-optimization stress test。
+4. **参数量–秩–优化器三因素研究**：把当前准析因框架扩展为可识别的三因素设计，直接研究 rank 是否改变优化动力学。
+5. **恢复动力学理论**：将“ALS 冲击—SGD 消化”建模为可测量的控制系统，并用干预实验验证，而非仅拟合层数指数。
+
+---
+
+## 5. 暂缓或停止
+
+- [ ] 在证据链修复前，不新增更多自评分、评审轮次或“acceptance-ready”声明。
+- [ ] 在参数匹配实验前，不以 8.3× PPL 宣称 low-rank/full-rank 的因果结论。
+- [ ] 在机制实验前，不继续用更多异构架构堆叠“深度阈值”样本。
+- [ ] 暂缓 7B Protocol A 暴力重跑；只有安全控制器或可检验的新稳定化假设出现后再运行。
+- [ ] 暂缓 >2000 步 crossover 搜索；其信息价值低于下游评估和参数匹配对照。
+
+---
+
+## 6. 下一里程碑
+
+**Milestone: Evidence-Complete Major Revision**
+
+- [ ] P0.1 数据审计全部完成。
+- [ ] B/D HellaSwag 协议级结果完成。
+- [ ] 参数量匹配实验完成。
+- [ ] 论文按证据重新定位为：**严谨的负结果 + 深度相关失稳 + 可复用评估协议**。
+- [ ] 由独立复核者从空环境复算所有主表。
+
+达到以上门槛后，再评估是否进入投稿，而不是依据内部评分决定“就绪”。

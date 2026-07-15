@@ -2,6 +2,8 @@
 
 **Status**: Comprehensive index of all project knowledge. Search by tag, architecture, or finding ID.
 
+> **Index snapshot (2026-06-14)**: Some confidence labels and open questions were superseded by later experiments and Round 6 review. Use [`../todo.md`](../todo.md) for current priorities and evidence boundaries.
+
 ---
 
 ## Finding Index

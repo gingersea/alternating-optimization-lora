@@ -4,10 +4,10 @@
 >
 > A unified evaluation framework for comparing post-training strategies. Core question: can the ALS-SGD-Perturbation (ASP) alternating protocol be a superior post-training optimizer compared to the dominant LoRA+AdamW paradigm?
 >
-> **状态**: 论文 v0.5 — 经三轮同行评审, **Acceptance-ready (TMLR 级别)**  
+> **状态**: 论文 v0.7 — Round 6 对抗评审结论为 **Major Revision**
 > **Phase B 完成**: Qwen2.5-7B full-rank 3/3 seeds, PPL 1.25 ± 0.01  
 > **实验注册表**: [docs/experiment-registry.md](docs/experiment-registry.md) — 全 5 架构, 8 模型, 50-800 步  
-> **切合度**: 7.9/10 (方法论 9, 实证 8.5, 理论 6.5, 协同 6)
+> **当前路线图**: [todo.md](todo.md) — 证据审计、参数量匹配与下游评估优先
 
 ---
 
@@ -19,8 +19,9 @@
 |------|------|
 | **[综合报告](docs/synthesis-report.md)** | 全部实验结论 + 论文思路 + 论证链 |
 | **[实验注册表](docs/experiment-registry.md)** | 🆕 全 5 架构 × 4 协议 × 50-800 步矩阵 |
-| **[最终评估](docs/final_assessment.md)** | 研究水平 B+/A- + 5 目标切合度 7.9/10 |
-| **[切合度审计](docs/alignment_audit.md)** | 🆕 初衷 vs 成果 逐项对照 (Phase B 更新) |
+| **[当前路线图](todo.md)** | 最新差距评估、证据边界与优先级（当前状态入口） |
+| **[最终评估](docs/final_assessment.md)** | 2026-06-13 历史快照，已被后续评审取代 |
+| **[切合度审计](docs/alignment_audit.md)** | 2026-06-20 Phase B 历史快照 |
 | **[数学分析](docs/math-analysis.md)** | ALS loss 量级、收敛理论、扰动正则化、文献引用 |
 | **[AltOpt 形式化](docs/framework.md)** | 框架的数学定义与推导 |
 | **[比较难题分析](docs/comparison-challenges.md)** | 公平比较的方法论分析 |
@@ -30,7 +31,7 @@
 
 | 版本 | 日期 | 评审决策 |
 |------|------|---------|
-| **[v0.5](paper/paper_draft_v0.2.md)** (current) | 06-13 | Acceptance-ready |
+| **[v0.7](paper/paper_draft_v0.2.md)** (canonical draft; filename cleanup tracked in `todo.md`) | 06-20 | Round 6: Major Revision |
 | [v0.4](paper/paper_draft_v0.2.md) | 06-13 | +Round 8-9 findings |
 | [v0.3](paper/paper_draft_v0.2.md) | 06-12 | Round 2 Minor Revision fixes |
 | [v0.1](paper/paper_draft_v0.1.md) | 06-12 | Round 1 Major Revision |
@@ -40,6 +41,8 @@
 | Round 1 | Major Revision (7 Required) | [`review_round1.md`](paper/review_round1.md) |
 | Round 2 | Minor Revision (5 MINOR) | [`review_round2.md`](paper/review_round2.md) |
 | Round 3 | **ACCEPT** (5 text fixes) | [`review_round3.md`](paper/review_round3.md) |
+| Round 5 | Minor Revision | [`review_round5.md`](paper/review_round5.md) |
+| **Round 6** | **Major Revision** | [`review_round6.md`](paper/review_round6.md) |
 
 ### 实验报告 (9+ 轮)
 
@@ -318,16 +321,16 @@ python experiments/analysis.py logs/
 
 | 维度 | 状态 |
 |------|------|
-| **论文** | v0.5 — 经三轮同行评审 → **Acceptance-ready** |
+| **论文** | v0.7 — Round 6 对抗评审 → **Major Revision** |
 | **实验** | 9 轮, 5 架构, 8 模型, 50-800 步, 100+ runs |
 | **测试** | **115/115 passing** |
 | **代码** | ~6,500 LOC, ALS 深度边界修复已应用 |
 | **文档** | 21 Markdown docs, 9 报告, 3 评审 |
-| **切合度** | **7.9/10** (方法论 9, 实证 8.5, 理论 6.5, 协同 6) |
-| **Git** | 32+ commits, pushing to GitHub |
+| **主要阻塞** | 结果追溯、参数量混杂、协议级下游评估 |
+| **研究定位** | 严谨负结果 + 深度相关失稳 + 可复用比较协议 |
 
 - [x] 2×2 析因框架 (评审公认核心贡献)
-- [x] 5 架构验证 (GPT-2, OPT, Qwen, SmolLM2, TinyLlama)
+- [x] 注册表记录 8 个实测架构（4 个 ≤24L 收敛，4 个 ≥28L 失稳）
 - [x] 多 seed 统计 (N=3-5, PB ANOVA, Fieller CI)
 - [x] 非单调收敛 + ASP 隐式正则化
 - [x] 深度边界发现 (4/4 架构 ≥28L 发散, 数学建模)
@@ -335,9 +338,12 @@ python experiments/analysis.py logs/
 - [x] 三轮同行评审 (Major → Minor → Accept)
 - [x] **Qwen2.5-7B full-rank 训练 (Protocol B, 3/3 seeds)**
 - [x] **Qwen2.5-7B LoRA 训练 (Protocol C+D, 3/3 seeds each)**
-- [ ] Qwen2.5-7B Protocol A (深度边界, 待 SGD-only 替代)
-- [ ] 下游任务评估 (MMLU/HellaSwag)
-- [ ] >2000 步交叉点验证
+- [ ] 审计并补齐主张到机器可读结果的证据链
+- [ ] Qwen2.5-7B Protocol B/D 的同协议 HellaSwag 评估
+- [ ] 参数量匹配的 full-rank/LoRA 对照
+- [ ] 将论文重构为准析因设计并收缩因果主张
+
+详细任务与完成门槛仅在 [`todo.md`](todo.md) 维护。
 
 ---
 
