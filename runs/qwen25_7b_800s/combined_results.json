@@ -94,5 +94,53 @@
     "peak_memory_mb": 9433.0986328125,
     "wall_time_s": 1490.3869984149933,
     "status": "success"
+  },
+  {
+    "model": "Qwen2.5-7B",
+    "protocol": "B",
+    "optimizer": "adamw",
+    "parameter_form": "full_rank",
+    "seed": 123,
+    "n_steps": 800,
+    "perplexity": 1.2444216012954712,
+    "loss": 0.21867080444810452,
+    "best_perplexity": 1.2398905754089355,
+    "best_loss": 0.21502310176007156,
+    "flops": 60924932096000.0,
+    "peak_memory_mb": 24181.9150390625,
+    "wall_time_s": 3225.414584875107,
+    "status": "success"
+  },
+  {
+    "model": "Qwen2.5-7B",
+    "protocol": "B",
+    "optimizer": "adamw",
+    "parameter_form": "full_rank",
+    "seed": 42,
+    "n_steps": 800,
+    "perplexity": 1.2524936199188232,
+    "loss": 0.2251364976725441,
+    "best_perplexity": 1.2423269748687744,
+    "best_loss": 0.21698620041561184,
+    "flops": 60924932096000.0,
+    "peak_memory_mb": 24181.9150390625,
+    "wall_time_s": 3263.579634666443,
+    "status": "success"
+  },
+  {
+    "model": "Qwen2.5-7B",
+    "protocol": "B",
+    "optimizer": "adamw",
+    "parameter_form": "full_rank",
+    "seed": 456,
+    "n_steps": 800,
+    "perplexity": 1.2489068508148193,
+    "loss": 0.22226864936867657,
+    "best_perplexity": 1.246658444404602,
+    "best_loss": 0.22046669250364487,
+    "flops": 60924932096000.0,
+    "peak_memory_mb": 24181.9150390625,
+    "wall_time_s": 3132.4245579242706,
+    "status": "success"
   }
 ]

@@ -1,7 +1,15 @@
 # Experiment Registry — Full Inventory
 
-**Date**: 2026-06-20
+**Date**: 2026-07-15 (evidence labels + eval conventions added)
 **Code version**: HEAD (Phase B complete, ALS depth-boundary fixes applied)
+**Audit status**: See also [claims-audit.md](claims-audit.md) for claim→artifact mapping and evidence labels.
+
+> **Evidence labels**: `observed` = machine-readable artifact in repo; `replicated` = multi-seed consistent, artifact in repo; `transcribed` = number from doc text, original artifact lost/not committed; `inferred` = derived from observed via model fit; `predicted` = extrapolation only.
+>
+> **Eval conventions** (do not cross-compare):
+> - **N_EVAL=200**: ~12,640 tokens — all 7B results in individual run JSONs use this
+> - **Full test set**: ~298,938 tokens — Protocol B only (full_test_eval.json, recovered)
+> - **Small models**: 50–100 eval samples, per-experiment, not comparable to 7B numbers
 
 ---
 
