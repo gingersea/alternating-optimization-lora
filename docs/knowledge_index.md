@@ -129,7 +129,7 @@
 | `docs/round10_results.md` | Round 10 architecture scaling |
 | `docs/experiment-report-001.md` through `005.md` | Individual experiment reports |
 | `docs/flaw-analysis-001.md` | GPT-2 Conv1D flaw analysis |
-| `paper/paper_draft_v0.2.md` | Current paper draft (v0.5) |
+| `paper/paper_draft_v0.7.md` | Current paper draft (v0.7; formerly `paper_draft_v0.2.md`) |
 | `paper/review_round1.md` through `round3.md` | All 3 review rounds |
 | `paper/revision_plan.md` | Round 1 revision plan |
 | `paper/multi_seed_results.json` | Multi-seed data |

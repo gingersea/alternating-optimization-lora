@@ -31,9 +31,9 @@
 
 | 版本 | 日期 | 评审决策 |
 |------|------|---------|
-| **[v0.7](paper/paper_draft_v0.2.md)** (canonical draft; filename cleanup tracked in `todo.md`) | 06-20 | Round 6: Major Revision |
-| [v0.4](paper/paper_draft_v0.2.md) | 06-13 | +Round 8-9 findings |
-| [v0.3](paper/paper_draft_v0.2.md) | 06-12 | Round 2 Minor Revision fixes |
+| **[v0.7](paper/paper_draft_v0.7.md)** (canonical draft) | 06-20 | Round 6: Major Revision |
+| [v0.4](paper/paper_draft_v0.7.md) | 06-13 | +Round 8-9 findings (superseded in-place) |
+| [v0.3](paper/paper_draft_v0.7.md) | 06-12 | Round 2 Minor Revision fixes (superseded in-place) |
 | [v0.1](paper/paper_draft_v0.1.md) | 06-12 | Round 1 Major Revision |
 
 | 评审轮次 | 决策 | 文档 |
