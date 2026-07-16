@@ -150,7 +150,7 @@ class TestALSBlockSolver:
 
     def test_als_solver_initializes(self, model):
         solver = ALSBlockSolver(model)
-        assert solver.reg_lambda == 1e-4
+        assert solver.reg_lambda == 1e-3  # default changed from 1e-4 to 1e-3
 
     def test_clear_cache(self, model):
         solver = ALSBlockSolver(model)
