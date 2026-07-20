@@ -1,0 +1,709 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<style>
+  @page { size: A4; margin: 2cm 2.2cm; }
+  body { font-family: 'Noto Serif CJK SC', serif; font-size: 11pt; line-height: 1.65; color: #222; }
+  h1 { font-size: 18pt; border-bottom: 2px solid #333; padding-bottom: 6pt; }
+  h2 { font-size: 14pt; border-bottom: 1px solid #999; padding-bottom: 4pt; margin-top: 24pt; page-break-after: avoid; }
+  h3 { font-size: 12pt; margin-top: 18pt; }
+  table { border-collapse: collapse; width: 100%; margin: 10pt 0; font-size: 9.5pt; page-break-inside: avoid; }
+  th, td { border: 1px solid #999; padding: 4pt 6pt; text-align: left; }
+  th { background: #eee; font-weight: bold; }
+  tr:nth-child(even) td { background: #fafafa; }
+  figure { margin: 16pt 0; text-align: center; page-break-inside: avoid; }
+  figcaption { font-size: 9pt; color: #555; margin-top: 4pt; }
+  img { max-width: 100%; }
+  code { background: #f4f4f4; padding: 1pt 3pt; font-size: 9pt; }
+  pre { background: #f4f4f4; padding: 8pt; font-size: 8.5pt; overflow-x: auto; border-left: 3px solid #ccc; }
+</style>
+</head>
+<body>
+<h1>ALS 残差放大问题：论文级分析</h1>
+<h2>摘要</h2>
+<p>Protocol A (ALS→SGD→Perturb) 在 8 个架构上表现出一个尖锐的深度边界：<img src="figures/math/240c1ba705db.png" style="vertical-align:middle; height:1.15em;"> 层的模型可以收敛，<img src="figures/math/9ad643357e5c.png" style="vertical-align:middle; height:1.15em;"> 层的模型全部发散。本文分析其数学根源：ALS 只修改 lm_head（输出层），但 Transformer 的残差连接将这一局部变化从第 $L$ 层逆向放大至第 0 层，放大倍数随层数指数增长——<img src="figures/math/da092b721072.png" style="vertical-align:middle; height:1.15em;">。当 <img src="figures/math/9ad643357e5c.png" style="vertical-align:middle; height:1.15em;"> 时，放大因子超过 SGD 的梯度裁剪恢复能力，导致浅层参数无法与新 lm_head 对齐，损失发散的恶性循环启动。我们通过 8 架构实证验证、消融实验和 LARS 优化器对比实验确认了这一机制，并讨论了三种修复路径。</p>
+<hr />
+<h2>1. 问题定义</h2>
+<h3>1.1 Protocol A 的结构</h3>
+<p>Protocol A 的每个训练周期包含三个阶段：</p>
+<table>
+<thead>
+<tr>
+<th>阶段</th>
+<th>操作</th>
+<th>修改范围</th>
+<th>具体实现</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>ALS (1 步)</td>
+<td>闭式最小二乘求解</td>
+<td><strong>仅 lm_head</strong></td>
+<td><code>altopt/als.py:243</code> — <code>for module in model: if "lm_head" in name: solve()</code></td>
+</tr>
+<tr>
+<td>SGD ($k$ 步)</td>
+<td>梯度下降消化 ALS 冲击</td>
+<td>全部可训练参数</td>
+<td>标准 CE loss → backward → clip → update</td>
+</tr>
+<tr>
+<td>Perturb (1 步)</td>
+<td>参数噪声注入</td>
+<td>全部可训练参数</td>
+<td><img src="figures/math/9d668b600e57.png" style="vertical-align:middle; height:1.15em;"></td>
+</tr>
+</tbody>
+</table>
+<p>ALS 阶段的核心数学操作（<code>als.py:262-363</code>）：</p>
+<p><img src="figures/math/0dd8c203c07c.png" style="max-width:100%; display:block; margin:6px auto;"></p>
+<p><img src="figures/math/0530cebe2a6a.png" style="max-width:100%; display:block; margin:6px auto;"></p>
+<p>其中 $V = 50257$ (vocab_size), $b = 1024$ (block_size), <img src="figures/math/2c45605fe81b.png" style="vertical-align:middle; height:1.15em;"> (正则化), <img src="figures/math/6e1c22ae3804.png" style="vertical-align:middle; height:1.15em;"> (EMA 步长)。</p>
+<h3>1.2 关键观察</h3>
+<p>ALS 只动了 lm_head 权重的约 1%（<img src="figures/math/6e1c22ae3804.png" style="vertical-align:middle; height:1.15em;">），但整个 lm_head 矩阵的每个 block 都会被独立求解——约 50 个 block 各得到一个闭式解，加权平均后写入。<strong>前面 27 个 transformer 层的参数完全不变。</strong></p>
+<hr />
+<h2>2. 数学机制：残差梯度放大</h2>
+<h3>2.1 前向传播中的残差链</h3>
+<p>给定 $L$ 层 Transformer：</p>
+<p><img src="figures/math/2016927baef1.png" style="max-width:100%; display:block; margin:6px auto;"></p>
+<p>每一层 <img src="figures/math/2f6408035156.png" style="vertical-align:middle; height:1.15em;"> 包含 Multi-Head Self-Attention 和 Feed-Forward Network。</p>
+<h3>2.2 反向传播中的梯度链</h3>
+<p>损失函数 <img src="figures/math/0de6ed65da98.png" style="vertical-align:middle; height:1.15em;"> 对 Layer 0 的梯度为：</p>
+<p><img src="figures/math/1b4fbeef15a8.png" style="max-width:100%; display:block; margin:6px auto;"></p>
+<p>由于 <img src="figures/math/9d0d10c8c0b8.png" style="vertical-align:middle; height:1.15em;">，每一步的 Jacobian 为：</p>
+<p><img src="figures/math/7d12d7a88924.png" style="max-width:100%; display:block; margin:6px auto;"></p>
+<h3>2.3 范数放大估计</h3>
+<p>对任意矩阵 <img src="figures/math/6c6404adc033.png" style="vertical-align:middle; height:1.15em;">，<img src="figures/math/b76fe7158f52.png" style="vertical-align:middle; height:1.15em;">。当 <img src="figures/math/2f6408035156.png" style="vertical-align:middle; height:1.15em;"> 的 Jacobian 范数为正值时，残差连接引入了<strong>乘性放大</strong>。</p>
+<p>定义 per-layer 放大因子 <img src="figures/math/971fcb3876ef.png" style="vertical-align:middle; height:1.15em;">，则 Layer 0 的梯度范数相对于 Layer $L$ 的放大倍数为：</p>
+<p><img src="figures/math/184e8db04e83.png" style="max-width:100%; display:block; margin:6px auto;"></p>
+<p><strong><img src="figures/math/c7d34ed23760.png" style="vertical-align:middle; height:1.15em;"> 的经验估计</strong>：从论文 §6.2 的"消化时间"拟合得到 <img src="figures/math/b0199eb281ea.png" style="vertical-align:middle; height:1.15em;">。验证方法：在 OPT-125m (12L) 和 Qwen2.5-0.5B (24L) 上测量 ALS 冲击后的 SGD 恢复所需步数，<img src="figures/math/64e11f964082.png" style="vertical-align:middle; height:1.15em;">, <img src="figures/math/d269984efb32.png" style="vertical-align:middle; height:1.15em;">，二者比值为 <img src="figures/math/106aaef0316a.png" style="vertical-align:middle; height:1.15em;">（数量级一致）。</p>
+<p>由此可计算各深度的放大倍数：</p>
+<table>
+<thead>
+<tr>
+<th>深度 $L$</th>
+<th><img src="figures/math/28cdf0a12288.png" style="vertical-align:middle; height:1.15em;"></th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>12 (GPT-2)</td>
+<td><img src="figures/math/9f5a8bfe0f00.png" style="vertical-align:middle; height:1.15em;"></td>
+<td>轻微放大</td>
+</tr>
+<tr>
+<td>22 (TinyLlama)</td>
+<td><img src="figures/math/30da20d4693e.png" style="vertical-align:middle; height:1.15em;"></td>
+<td>中等放大</td>
+</tr>
+<tr>
+<td>24 (Qwen0.5B)</td>
+<td><img src="figures/math/28ea20c94037.png" style="vertical-align:middle; height:1.15em;"></td>
+<td>显著放大</td>
+</tr>
+<tr>
+<td>28 (Qwen7B)</td>
+<td><img src="figures/math/ead9d31f75b2.png" style="vertical-align:middle; height:1.15em;"></td>
+<td>超过 SGD 恢复阈值</td>
+</tr>
+<tr>
+<td>32 (Mistral-7B)</td>
+<td><img src="figures/math/5354874dc19a.png" style="vertical-align:middle; height:1.15em;"></td>
+<td>灾难性</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2>3. 实证验证：八架构深度边界</h2>
+<h3>3.1 100 步协议 A vs B 矩阵</h3>
+<p><strong>Table 1</strong>: 8 个架构在 100 步、协议 A（ASP + Full-Rank）和协议 B（AdamW + Full-Rank）的 PPL 对比。</p>
+<table>
+<thead>
+<tr>
+<th>模型</th>
+<th>参数量</th>
+<th>层数</th>
+<th>GPU</th>
+<th>A PPL</th>
+<th>B PPL</th>
+<th>A-B Gap</th>
+<th>状态</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>GPT-2</td>
+<td>124M</td>
+<td>12</td>
+<td>—</td>
+<td>185</td>
+<td>8.3</td>
+<td>177</td>
+<td>✓</td>
+</tr>
+<tr>
+<td>OPT-125m</td>
+<td>125M</td>
+<td>12</td>
+<td>—</td>
+<td>651</td>
+<td>22.3</td>
+<td>629</td>
+<td>✓</td>
+</tr>
+<tr>
+<td>TinyLlama-1.1B</td>
+<td>1.1B</td>
+<td>22</td>
+<td>—</td>
+<td>7,323</td>
+<td>18.3</td>
+<td>7,305</td>
+<td>✓</td>
+</tr>
+<tr>
+<td>Qwen2.5-0.5B</td>
+<td>494M</td>
+<td>24</td>
+<td>—</td>
+<td>3,766</td>
+<td>44.4</td>
+<td>3,722</td>
+<td>✓</td>
+</tr>
+<tr>
+<td>DeepSeek-R1-1.5B</td>
+<td>1.8B</td>
+<td>28</td>
+<td>✓</td>
+<td>NaN</td>
+<td>42</td>
+<td>NaN</td>
+<td>✗</td>
+</tr>
+<tr>
+<td>SmolLM2-135M</td>
+<td>135M</td>
+<td>30</td>
+<td>—</td>
+<td>69,748</td>
+<td>18</td>
+<td>69,730</td>
+<td>✗</td>
+</tr>
+<tr>
+<td>Mistral-7B</td>
+<td>7.2B</td>
+<td>32</td>
+<td>✓</td>
+<td>NaN</td>
+<td>3,065</td>
+<td>NaN</td>
+<td>✗</td>
+</tr>
+<tr>
+<td>Qwen2.5-7B</td>
+<td>7.1B</td>
+<td>28</td>
+<td>✓</td>
+<td>~1.2M</td>
+<td>1.25</td>
+<td>~1.2M</td>
+<td>✗</td>
+</tr>
+</tbody>
+</table>
+<figure><img src="figures/fig1_depth_boundary.png" style="max-width:100%"><figcaption>Figure 1: Protocol A vs B across 8 Architectures (100 steps).</figcaption></figure>
+<p><strong>关键特征</strong>：</p>
+<ol>
+<li><strong>尖锐边界</strong>：所有 <img src="figures/math/038e17d11062.png" style="vertical-align:middle; height:1.15em;"> 层模型收敛，所有 <img src="figures/math/4e7f3ce26fcf.png" style="vertical-align:middle; height:1.15em;"> 层模型发散。没有例外。</li>
+<li><strong>SmolLM2-135M (30L)</strong> 是半例外：PPL = 69,748（非 NaN），但这是基线的 <strong>5× 恶化</strong>——协议 B 在同一模型上达到 PPL = 18。</li>
+<li><strong>边界与参数量无关</strong>：TinyLlama (1.1B, 22L) 收敛，SmolLM2 (135M, 30L) 发散。决定因素是层数，不是参数量。</li>
+</ol>
+<h3>3.2 深度区间内的精细扫描</h3>
+<p><strong>Table 2</strong>: P1.2 实验——4 模型在 200 步全 ASP 下的收敛行为。</p>
+<table>
+<thead>
+<tr>
+<th>模型</th>
+<th>层数</th>
+<th>ASP PPL</th>
+<th>基线 PPL</th>
+<th>基线改善</th>
+<th>状态</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>OPT-125m</td>
+<td>12</td>
+<td>106.9</td>
+<td>231</td>
+<td>2.2×</td>
+<td>✓</td>
+</tr>
+<tr>
+<td>TinyLlama-1.1B</td>
+<td>22</td>
+<td>15.5</td>
+<td>146</td>
+<td>9.4×</td>
+<td>✓</td>
+</tr>
+<tr>
+<td>Qwen2.5-0.5B</td>
+<td>24</td>
+<td>18.0</td>
+<td>411</td>
+<td>22.8×</td>
+<td>✓</td>
+</tr>
+<tr>
+<td>Qwen2.5-7B</td>
+<td>28</td>
+<td>~1,200,000</td>
+<td>133</td>
+<td>—</td>
+<td>✗</td>
+</tr>
+</tbody>
+</table>
+<p>注意：OPT-125m 在 12 层的 PPL 为 106.9（弱于 22L/24L），这是因为 OPT-125m 的预训练质量较差——未经训练的基线 PPL 本身就是 ~231。TinyLlama 和 Qwen0.5B 经过更强预训练，ASP 的起点更好（更好的初始 hidden states → ALS 解的质量更高 → SGD 消化更容易）。</p>
+<h3>3.3 Qwen2.5-7B 的详细发散曲线</h3>
+<p><strong>Table 3</strong>: Qwen2.5-7B 协议 A 在 FSDP FULL_SHARD 上的逐步 PPL（种子 42）。</p>
+<table>
+<thead>
+<tr>
+<th>步数</th>
+<th>PPL</th>
+<th>log10(PPL)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>100</td>
+<td>1,169,679</td>
+<td>6.07</td>
+</tr>
+<tr>
+<td>200</td>
+<td>1,033,027</td>
+<td>6.01</td>
+</tr>
+<tr>
+<td>300</td>
+<td>1,120,941</td>
+<td>6.05</td>
+</tr>
+<tr>
+<td>400</td>
+<td>~1,200,000</td>
+<td>6.08</td>
+</tr>
+<tr>
+<td>704</td>
+<td>终止</td>
+<td>—</td>
+</tr>
+</tbody>
+</table>
+<p><strong>无收敛趋势</strong>。PPL 在 <img src="figures/math/1988ad9d48e2.png" style="vertical-align:middle; height:1.15em;"> 附近上下震荡（约为基线 PPL=133 的 <img src="figures/math/9566e46b57dc.png" style="vertical-align:middle; height:1.15em;"> 倍），每个 ALS 周期后产生新的开销峰值，SGD 消化期只能略微拉回。</p>
+<p>共 <strong>11 次独立尝试</strong>、2 种分布式后端（DeepSpeed ZeRO-2 + PyTorch FSDP）全部失败，确认这是算法问题而非工程问题。</p>
+<hr />
+<h2>4. 梯度裁剪：恶性循环的触发点</h2>
+<h3>4.1 标准 SGD 的裁剪机制</h3>
+<p>SGD 阶段的关键代码路径（<code>altopt/sgd.py:63-99</code>）：</p>
+<pre><code>forward → compute CE loss → backward → clip_grad_norm_(max_norm=1.0) → optimizer.step()
+</code></pre>
+<p><code>clip_grad_norm_</code> 的工作原理：计算所有参数梯度的全局 L2 范数 <img src="figures/math/76f32052dd82.png" style="vertical-align:middle; height:1.15em;">，如果 <img src="figures/math/c7c9ebe7d0ef.png" style="vertical-align:middle; height:1.15em;">，则对所有梯度等比缩放：<img src="figures/math/6dd9da5678ae.png" style="vertical-align:middle; height:1.15em;">。</p>
+<h3>4.2 剪切如何制造反馈循环</h3>
+<p>ALS 修改 lm_head 后，首轮 SGD 的梯度分布如下（示意）：</p>
+<pre><code>分量         | 未裁剪范数 | 裁剪后有效更新 | 问题
+-------------|-----------|--------------|------
+Layer 0 梯度  | ~0.87     | ~0.87/G      | ← 被深层&quot;稀释&quot;，有效更新过小
+Layer 14 梯度 | ~0.40     | ~0.40/G      | ← 中等
+Layer 27 梯度 | ~0.10     | ~0.10/G      | ← 正常，离 lm_head 最近
+全局范数 G   | ~1.5      | → 裁剪到 1.0   | ← 浅层贡献了大部分范数
+
+裁剪后：
+  Layer 0 有效更新量 ≈ 0.58（相对于其真实需要的梯度，远不够）
+  Layer 27 有效更新量 ≈ 0.07（相对于其真实需要的梯度，可能足够）
+</code></pre>
+<p><strong>恶性循环的动力学</strong>：</p>
+<ol>
+<li>ALS → lm_head 变化 → 前向传播输出偏离 → loss ↑</li>
+<li>SGD step 1: 浅层梯度被残差放大 → 全局裁剪削平浅层更新 → 浅层 "没学到" 如何配合新 lm_head</li>
+<li>SGD step 2: 浅层仍然不对齐 → loss 不降或回升 → 梯度更大 → 裁剪更严重</li>
+<li>$k$ 步后：浅层仍未对齐 → 下一个 ALS 周期 → lm_head 再次被修改 → 新一轮不对齐</li>
+<li>累积效应：每轮 ALS 都让 lm_head 偏离一点点（<img src="figures/math/6e1c22ae3804.png" style="vertical-align:middle; height:1.15em;">），但浅层从未追上</li>
+</ol>
+<h3>4.3 跨种子方差验证</h3>
+<p><strong>Table 4</strong>: 协议 A 的跨种子变异系数（CV%）。如果问题是纯随机的，CV 应该小。如果问题是反馈循环驱动的，CV 应该大。</p>
+<table>
+<thead>
+<tr>
+<th>步数</th>
+<th>OPT-125m A CV</th>
+<th>Qwen0.5B A CV</th>
+<th>GPT-2 A CV</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>50</td>
+<td>78.2%</td>
+<td>152.3%</td>
+<td>—</td>
+</tr>
+<tr>
+<td>100</td>
+<td>22.7%</td>
+<td>88.0%</td>
+<td>—</td>
+</tr>
+<tr>
+<td>200</td>
+<td>73.7%</td>
+<td>157.8%</td>
+<td>—</td>
+</tr>
+<tr>
+<td>400</td>
+<td>69.4%</td>
+<td>158.2%</td>
+<td>—</td>
+</tr>
+<tr>
+<td>800</td>
+<td>120.3%</td>
+<td>44.9%</td>
+<td>—</td>
+</tr>
+</tbody>
+</table>
+<p>对照：协议 B（AdamW + Full-Rank）在所有步数和种子上 CV &lt; 5%。</p>
+<p><strong>解释</strong>：ALS 的 Cholesky 分解对给定 batch 是确定性的，但 batch 的采样（shuffle seed）决定了 lm_head 解出的方向。如果这个方向"碰巧"与当前浅层参数对齐，SGD 可以快速消化（低 PPL 种子）；如果方向相反，SGD 追不上（高 PPL 种子）。随着步数增加，小初始不对齐是否被放大取决于每次 ALS 的方向和 SGD 的恢复效率，这就是高 CV 的根源。</p>
+<hr />
+<h2>5. 消融实验：分离各组件的作用</h2>
+<h3>5.1 P1.1 组件归因</h3>
+<p><strong>Table 5</strong>: OPT-125m (12L) 上的 4 条件嵌套消融，200 步，N=3 seeds，FLOPs 匹配 (±2%)。</p>
+<table>
+<thead>
+<tr>
+<th>条件</th>
+<th>PPL (Mean ± SE)</th>
+<th>Δ vs SGD-only</th>
+<th>CV</th>
+<th>解释</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>SGD-only</td>
+<td>59.4 ± 3.1</td>
+<td>— (baseline)</td>
+<td>5.1%</td>
+<td>纯 SGD，无 ALS，无 Perturb</td>
+</tr>
+<tr>
+<td>ALS+SGD</td>
+<td>62.5 ± 0.4</td>
+<td>+3.1</td>
+<td>0.6%</td>
+<td>ALS→SGD 交替，无 Perturb</td>
+</tr>
+<tr>
+<td>SGD+Perturb</td>
+<td>62.2 ± 0.6</td>
+<td>+2.8</td>
+<td>0.9%</td>
+<td>SGD + Perturb，无 ALS</td>
+</tr>
+<tr>
+<td>Full ASP</td>
+<td>69.0 ± 3.6</td>
+<td>+9.6</td>
+<td>5.2%</td>
+<td>ALS + SGD + Perturb</td>
+</tr>
+</tbody>
+</table>
+<p><strong>效应分解</strong>：</p>
+<table>
+<thead>
+<tr>
+<th>效应</th>
+<th>ΔPPL</th>
+<th>公式</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>ALS 主效应</td>
+<td>+3.1</td>
+<td>(ALS+SGD) − (SGD-only)</td>
+</tr>
+<tr>
+<td>Perturb 主效应</td>
+<td>+2.8</td>
+<td>(SGD+Perturb) − (SGD-only)</td>
+</tr>
+<tr>
+<td>期望加性</td>
+<td>+5.9</td>
+<td>+3.1 + +2.8</td>
+</tr>
+<tr>
+<td>ALS×Perturb 交互</td>
+<td><strong>+3.6</strong></td>
+<td>(Full ASP − SGD-only) − 期望加性</td>
+</tr>
+<tr>
+<td>Full ASP 总效应</td>
+<td>+9.6</td>
+<td>(Full ASP) − (SGD-only)</td>
+</tr>
+</tbody>
+</table>
+<p><strong>核心发现</strong>：</p>
+<ol>
+<li>ALS 和 Perturb 单独使用时危害相近（+3.1 vs +2.8 PPL）</li>
+<li>联合使用时产生<strong>拮抗交互</strong>：组合效应比加性预期大 61%（+9.6 vs +5.9）</li>
+<li><strong>ALS+SGD（无 Perturb）CV = 0.6%</strong>，Full ASP CV = 5.2%——不稳定性需要 ALS 和 Perturb 的<strong>共同存在</strong></li>
+<li>去掉 Perturb 可以恢复 68% 的 PPL 损失：从 Full ASP 的 +9.6 降到 ALS+SGD 的 +3.1</li>
+</ol>
+<p><strong>对深度模型的含义</strong>：在 12 层模型上，ALS 单独 +3.1 PPL 在 50 步 SGD 消化后可接受。在 28 层模型上，同样的 +3.1 PPL 按 <img src="figures/math/d653d63c44ae.png" style="vertical-align:middle; height:1.15em;"> 倍放大后等效于约 27 PPL 的冲击——SGD 根本无法在 50 步内消化。</p>
+<h3>5.2 LARS 优化器对比</h3>
+<p>LARS (Layer-wise Adaptive Rate Scaling) 对每个参数独立计算有效学习率：</p>
+<p><img src="figures/math/8ac066f35332.png" style="max-width:100%; display:block; margin:6px auto;"></p>
+<p>其中 <img src="figures/math/269cb4a8704d.png" style="vertical-align:middle; height:1.15em;"> 是 trust coefficient（实验中扫描了 0.001、0.01、0.1），<img src="figures/math/ffe9f913124f.png" style="vertical-align:middle; height:1.15em;"> 是基础学习率。LARS 的核心优势在于<strong>浅层的大梯度会被自身的 <img src="figures/math/5c1650f0796f.png" style="vertical-align:middle; height:1.15em;"> 比率自动调低有效学习率，深层的梯度也会被该比率独立调整</strong>——理论上可以抵消残差放大。</p>
+<p><strong>Table 6</strong>: Qwen2.5-0.5B (24L) 上 LARS vs 标准 SGD，200 步协议 A，4 周期。</p>
+<table>
+<thead>
+<tr>
+<th>周期</th>
+<th>SGD PPL</th>
+<th>LARS PPL (κ=0.001, no global clip)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1 (52 步)</td>
+<td>79.0</td>
+<td>296.9</td>
+</tr>
+<tr>
+<td>2 (104 步)</td>
+<td>52.8</td>
+<td>754,465</td>
+</tr>
+<tr>
+<td>3 (156 步)</td>
+<td>∞ (发散)</td>
+<td>573,056</td>
+</tr>
+<tr>
+<td>4 (208 步)</td>
+<td>10^223 (灾难性)</td>
+<td>161,674</td>
+</tr>
+</tbody>
+</table>
+<p><strong>分析</strong>：</p>
+<ol>
+<li><strong>SGD</strong> 在前两周期看似收敛（79→53），但在第三周期突然发散至 inf——这正是反馈循环的临界点：累积了三轮 ALS 的不对齐后，SGD 的恢复机制崩溃</li>
+<li><strong>LARS</strong> 避免了 inf 发散（全局 PPL 始终有界），但收敛到极差的值（~160k）——LARS 的逐层缩放防止了梯度爆炸但不能逆转已经积累的参数不对齐</li>
+<li><strong>两个优化器都失败了</strong>——证明问题不在优化器选择上，而在 ALS 本身制造的残差不对齐上</li>
+</ol>
+<h3>5.3 GPT-2 12L 对照</h3>
+<p><strong>Table 7</strong>: GPT-2 (12L) 上 LARS vs 标准 SGD，200 步协议 A，4 周期。</p>
+<table>
+<thead>
+<tr>
+<th>周期</th>
+<th>SGD PPL</th>
+<th>LARS PPL</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1</td>
+<td>87.9</td>
+<td>173.0</td>
+</tr>
+<tr>
+<td>2</td>
+<td>37.4</td>
+<td>172.4</td>
+</tr>
+<tr>
+<td>3</td>
+<td>24.7</td>
+<td>130.3</td>
+</tr>
+<tr>
+<td>4</td>
+<td><strong>18.0</strong></td>
+<td>146.4</td>
+</tr>
+</tbody>
+</table>
+<p>在浅层模型上，标准 SGD 稳定收敛（88→18，改善 4.9×），而 LARS 过补偿（逐层缩放给浅层过度分配更新预算 → 震荡）。<strong>LARS 在残差放大不显著的深度上有负面影响。</strong></p>
+<hr />
+<h2>6. 完整实验证据链</h2>
+<table>
+<thead>
+<tr>
+<th>实验</th>
+<th>模型范围</th>
+<th>发现</th>
+<th>证据文件</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>八架构验证</td>
+<td>GPT-2 → Mistral-7B (12-32L)</td>
+<td>≤24L 收敛，≥28L 发散（8/8）</td>
+<td><code>runs/cross_arch/</code></td>
+</tr>
+<tr>
+<td>跨深度 ASP</td>
+<td>4 模型 (12-28L)</td>
+<td>OPT 12L 收敛, 28L 发散</td>
+<td><code>runs/p1.2_depth/results.json</code></td>
+</tr>
+<tr>
+<td>Qwen7B FSDP</td>
+<td>Qwen2.5-7B</td>
+<td>PPL ~1.2M 无趋势</td>
+<td><code>runs/qwen25_7b_800s/Qwen25-7B_PA_800s_s42.json</code></td>
+</tr>
+<tr>
+<td>组件归因</td>
+<td>OPT-125m (12L)</td>
+<td>ALS +3.1, Perturb +2.8, 交互 +3.6</td>
+<td><code>runs/p1.1_ablation/results.json</code></td>
+</tr>
+<tr>
+<td>LARS 优化器</td>
+<td>GPT-2 (12L) + Qwen0.5B (24L)</td>
+<td>LARS 在 12L 过补偿，24L 避免 inf 但不收敛</td>
+<td><code>runs/lars_sanity_gpt2.json</code>, <code>runs/lars_qwen05b.json</code></td>
+</tr>
+<tr>
+<td>跨种子方差</td>
+<td>OPT-125m + Qwen0.5B (50-800步)</td>
+<td>协议 A CV 23-158%，协议 B CV &lt;5%</td>
+<td><code>runs/multi_seed_summary.json</code></td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2>7. 理论模型：深度边界的解析解</h2>
+<h3>7.1 临界条件</h3>
+<p>SGD 在一步内能恢复的最大扰动幅度受学习率 <img src="figures/math/ffe9f913124f.png" style="vertical-align:middle; height:1.15em;">、梯度裁剪阈值 <img src="figures/math/2d601d7f74b3.png" style="vertical-align:middle; height:1.15em;"> 和每层独立梯度与权重范数之比 <img src="figures/math/efd9b71aeaa5.png" style="vertical-align:middle; height:1.15em;"> 的限制。</p>
+<p>ALS 对 lm_head 造成的有效扰动经 $L$ 层残差后到达 Layer 0 的幅度为：</p>
+<p><img src="figures/math/1dba075a53c6.png" style="max-width:100%; display:block; margin:6px auto;"></p>
+<p>其中 <img src="figures/math/6e1c22ae3804.png" style="vertical-align:middle; height:1.15em;"> 为 EMA 步长。</p>
+<p>SGD 能消化的最大扰动幅度为：</p>
+<p><img src="figures/math/03cb44b651ea.png" style="max-width:100%; display:block; margin:6px auto;"></p>
+<p>其中 <img src="figures/math/23a7efb9a339.png" style="vertical-align:middle; height:1.15em;"> 是每个周期的 SGD 步数（默认为 50）。</p>
+<p>收敛的临界条件为 <img src="figures/math/6536344e5aa7.png" style="vertical-align:middle; height:1.15em;">，即：</p>
+<p><img src="figures/math/6247d50b2f07.png" style="max-width:100%; display:block; margin:6px auto;"></p>
+<p>代入实验拟合值（<img src="figures/math/b0199eb281ea.png" style="vertical-align:middle; height:1.15em;">, <img src="figures/math/6e1c22ae3804.png" style="vertical-align:middle; height:1.15em;">, <img src="figures/math/4ddf3e2d6088.png" style="vertical-align:middle; height:1.15em;">, <img src="figures/math/a1e4664bf72b.png" style="vertical-align:middle; height:1.15em;">）：</p>
+<p><img src="figures/math/d7fda0f4c0a7.png" style="max-width:100%; display:block; margin:6px auto;"></p>
+<p><strong>解析预测的边界（~13 层）比实证边界（~26 层）保守。</strong> 差异来源：(1) <img src="figures/math/c7d34ed23760.png" style="vertical-align:middle; height:1.15em;"> 估计来自仅 2 个数据点（12L 和 24L 的消化时间），不确定性大；(2) 临界条件简化了 SGD 的多步累积效应。实证边界更可靠。</p>
+<h3>7.2 为什么 24L 能收敛但 28L 不能</h3>
+<p>24 层时，<img src="figures/math/8314f290f245.png" style="vertical-align:middle; height:1.15em;">，SGD 在 200-250 步内可以逐步缩小不对齐，尽管非单调（P1.2 实验中 Qwen0.5B 的 PPL = 18.0 验证了收敛但方差大）。</p>
+<p>28 层时，<img src="figures/math/2968d2320cfb.png" style="vertical-align:middle; height:1.15em;">，梯度裁剪机制在 <img src="figures/math/abd134433a68.png" style="vertical-align:middle; height:1.15em;"> 时开始系统性削平浅层更新，启动 §4.2 所述的反馈循环。<strong><img src="figures/math/391b9a299b04.png" style="vertical-align:middle; height:1.15em;"> 是 <img src="figures/math/5d218fed6a47.png" style="vertical-align:middle; height:1.15em;"> 的解</strong>，与 8 架构实证一致。</p>
+<hr />
+<h2>8. 解决方案与未来方向</h2>
+<h3>8.1 已验证：SGD+Perturb（无 ALS）</h3>
+<p>在 GPT-2 (12L, Conv1D) 上，纯 SGD+Perturb（无 ALS）在 800 步达到 PPL = 2.00 ± 0.01，优于 AdamW 的 PPL = 2.78 ± 0.01（改善 28%）。<strong>这个方向没有深度限制</strong>——因为不涉及 ALS 的闭式求解，所有参数通过梯度流同步更新，残差放大不会触发反馈循环。</p>
+<h3>8.2 理论可行但未验证</h3>
+<table>
+<thead>
+<tr>
+<th>方向</th>
+<th>原理</th>
+<th>障碍</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>多层 ALS</td>
+<td>ALS 对最后 $k$ 层分别求解，$k$ 与 $L$ 成比例</td>
+<td>每层额外 ~7GB 内存（缓存激活 + Cholesky 工作空间），7B 模型当前 GPU 内存不可行</td>
+</tr>
+<tr>
+<td>减小 ALS <img src="figures/math/7b7f9dbfea05.png" style="vertical-align:middle; height:1.15em;"></td>
+<td><img src="figures/math/e652f7f4f50d.png" style="vertical-align:middle; height:1.15em;">，逐步减小每次 ALS 的冲击幅度</td>
+<td>需要 <img src="figures/math/bffde909242b.png" style="vertical-align:middle; height:1.15em;"> 的训练周期才能达到同样的 lm_head 变化量，训练时间不可接受</td>
+</tr>
+<tr>
+<td>LAMB 优化器</td>
+<td>比 LARS 更强的层自适应 + 自适应学习率 + 动量</td>
+<td>7B 内存超限（同 LARS），且 LARS 实验已证明优化器改良不够</td>
+</tr>
+</tbody>
+</table>
+<h3>8.3 已验证：隐式正则化是 ASP 的独特价值</h3>
+<p>尽管 ALS 在深模型上失败，P1.3 实验证明 ASP 的 SGD+Perturb 组合在 12 层模型上具有隐式正则化属性——跨域泛化显著优于 AdamW：</p>
+<table>
+<thead>
+<tr>
+<th>优化器</th>
+<th>WT2 PPL</th>
+<th>C4 PPL</th>
+<th>WT2/C4 比率</th>
+<th>结论</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>ASP@800</td>
+<td>75.1</td>
+<td><strong>48.1</strong></td>
+<td>1.56</td>
+<td>泛化</td>
+</tr>
+<tr>
+<td>AdamW@200</td>
+<td><strong>18.5</strong></td>
+<td>92.4</td>
+<td>0.20</td>
+<td>过拟合</td>
+</tr>
+</tbody>
+</table>
+<p>ASP 在 C4 跨域评估上达到 1.9× 更好的 PPL（48.1 vs 92.4），代价是域内 PPL 差 4.1×。WT2/C4 比率对 ASP 为 1.56（模型在 C4 上的表现好于 WT2 → 跨域泛化），对 AdamW 为 0.20（模型在 WT2 上的表现远好于 C4 → 域内过拟合）。</p>
+<hr />
+<figure><img src="figures/fig7_amplification_vs_depth.png" style="max-width:100%"><figcaption>Figure 7: Theoretical Gradient Amplification vs Depth (ρ̄=1.08).</figcaption></figure>
+<h2>9. 总结</h2>
+<p>ALS 残差放大问题的完整因果链：</p>
+<pre><code>ALS 只求解 lm_head 的最小二乘解 (α=0.01, 仅 1% 被采纳)
+    ↓
+lm_head 权重变化 → 通过残差连接被逐层放大 (×ρ^{L-1}, ρ≈1.08)
+    ↓
+SGD 反向传播中，浅层梯度被放大 γ(L) = ρ^{L-1} 倍
+    ↓
+全局梯度裁剪到 1.0 → 浅层有效更新量被 &quot;深层+浅层&quot; 总范数中的浅层贡献稀释
+    ↓
+浅层参数无法与新 lm_head 对齐 → 损失不降或上升 → 梯度更大 → 反馈循环
+    ↓
+当 L ≤ 24: γ ≤ 6.3, SGD 在 125-250 步内可勉强化解
+当 L ≥ 28: γ ≥ 8.7, 超出 SGD 恢复阈值 → 发散 (8/8 架构验证)
+</code></pre>
+<p><strong>数据支撑</strong>：
+- 8 架构验证：深度边界 L*≈26，≤24L 收敛，≥28L 发散
+- P1.2 跨深度 ASP：4 模型验证非单调收敛→发散的转变
+- P1.1 消融：ALS 是主要瓶颈（+3.1 PPL），与 Perturb 有拮抗交互（+3.6 PPL）
+- LARS 实验：优化器改良不够（24L 上无 inf 但不收敛）
+- 跨域正则化：ASP 的 Perturb 成分在 12L 上有独特价值（C4 泛化 1.9× 优于 AdamW）</p>
+<p><strong>对后训练实践的启示</strong>：闭式最小二乘求解在深度 Transformer 上的适用性有一个明确的深度上限（~26 层），超出此上限的模型需要不同的优化策略——要么对所有层做 ALS（内存不可行），要么完全放弃闭式求解改用纯梯度方法。</p>
+</body>
+</html>
