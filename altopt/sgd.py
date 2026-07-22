@@ -47,11 +47,13 @@ class SGDPhaseOptimizer:
         self.last_grad_norm: float = 0.0
 
         # Create optimizer over trainable parameters
+        # foreach=False avoids multi-tensor kernel buffer allocations on constrained GPUs
         self._optimizer = torch.optim.SGD(
             filter(lambda p: p.requires_grad, model.parameters()),
             lr=lr,
             momentum=momentum,
             weight_decay=weight_decay,
+            foreach=False,
         )
 
     def set_lr(self, lr: float) -> None:
