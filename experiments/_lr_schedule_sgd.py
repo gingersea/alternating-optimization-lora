@@ -23,8 +23,9 @@ SGD_STEPS = 50
 DTYPE = torch.float32
 device = torch.device("cuda:0")
 
-tokenizer = AutoTokenizer.from_pretrained("gpt2")
-tokenizer.pad_token = tokenizer.eos_token
+tokenizer = AutoTokenizer.from_pretrained(MODEL, use_fast=False)
+if tokenizer.pad_token is None:
+    tokenizer.pad_token = tokenizer.eos_token
 ds = load_dataset("wikitext", "wikitext-2-raw-v1")
 def tok(x): return tokenizer(x["text"], truncation=True, max_length=128, padding="max_length")
 train_ds = ds["train"].map(tok, batched=True, remove_columns=["text"])
@@ -33,7 +34,9 @@ train_ds.set_format("torch", columns=["input_ids", "attention_mask"])
 eval_ds.set_format("torch", columns=["input_ids", "attention_mask"])
 def c(b):
     r = {k: torch.stack([x[k] for x in b]) for k in b[0]}
-    r["labels"] = r["input_ids"].clone(); return r
+    r["labels"] = r["input_ids"].clone()
+    r["labels"][r["attention_mask"] == 0] = -100  # mask pad positions
+    return r
 train_dl = DataLoader(train_ds, batch_size=4, shuffle=True, collate_fn=c)
 eval_dl = DataLoader(eval_ds, batch_size=8, collate_fn=c)
 
