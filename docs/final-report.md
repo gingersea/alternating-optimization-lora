@@ -10,7 +10,9 @@
 
 This project investigates **Alternating Least Squares (ALS)-based post-training** of large language models (LLMs) — an alternative to gradient-based fine-tuning that solves closed-form least-squares problems on output layers instead of relying solely on backpropagation. The central problem: while ALS-based methods work on shallow models (≤24 layers), they **catastrophically diverge on deep models (≥28 layers)** — 11/11 independent attempts on Qwen2.5-7B failed.
 
-We make four contributions: **(1) a controlled ablation experiment** proving that ALS weight modification — not SGD, not perturbation noise, not hook overhead — is the sole sufficient cause of divergence; **(2) a causal theory** showing that residual connections amplify ALS perturbations by ≈1.08× per layer (1.08²⁷≈8× at 28 layers), far beyond SGD's recovery capacity; **(3) a novel algorithm, A-SYNC**, which keeps ALS's ability to find optimal directions but injects them as **gradient biases** rather than weight modifications — achieving the first-ever convergence of ALS-based post-training on a 28-layer model (PPL 59.1→6.82, 8.7× baseline improvement) and revealing a power-law convergence law (asymptote PPL≈3.5); **(4) a FLOPs-normalized comparison** establishing where A-SYNC, AdamW, and LoRA each excel.
+This project investigates **Alternating Least Squares (ALS)-based post-training** of large language models (LLMs) — an alternative to gradient-based fine-tuning that solves closed-form least-squares problems on output layers instead of relying solely on backpropagation. The central problem: while ALS-based methods work on shallow models (≤24 layers), they **catastrophically diverge on deep models (≥28 layers)** — 11/11 independent attempts on Qwen2.5-7B failed.
+
+We make three contributions. **(1) A controlled ablation experiment** proves that ALS weight modification — not SGD, not perturbation noise, not hook overhead — is the sole sufficient cause of divergence: ALS-only diverges in a single step (PPL 73→2×10⁹), while SGD-only, Perturb-only, and ALS(no-op)+SGD all converge on the same 28-layer model. **(2) A causal theory** shows that residual connections amplify ALS perturbations by ≈1.08× per layer (1.08²⁷≈8× at 28 layers), far beyond SGD's recovery capacity — predicting the observed depth boundary (L_max≈26, verified across 4 model families). **(3) A negative result with a corrective lesson**: we designed an algorithm, A-SYNC, intended to salvage ALS by injecting its closed-form solution as a *gradient bias* rather than a weight modification, and verified through matched-budget controls that (a) the injection as originally implemented was a timing no-op that never reached any parameter update, and (b) even when correctly timed, injection never outperforms plain SGD (trajectory correlation 0.9998 on 7B; pure SGD reaches PPL 6.83 vs A-SYNC's 6.82 at identical budgets). The genuinely convergent behavior previously attributed to A-SYNC is the convergence of plain SGD itself — with the variant ranking re-interpreted as a **learning-rate schedule** effect (CONSTANT lr beats lr→0 cosine decay), not an injection-strength effect. We also report a FLOPs-normalized comparison establishing where AdamW and LoRA excel, positioning ALS-based methods as unstable on deep models and gradient repair as ineffective.
 
 ---
 
@@ -99,9 +101,9 @@ which matches the observed boundary (≤24 converge, ≥28 diverge) across all f
 
 A second finding emerged: ALS's $\delta$ magnitude **increases** across cycles (0.085 → 0.196, ×2.3), because SGD's recovery shifts the body distribution, making the next ALS solve find a *larger* discrepancy. This creates a **positive feedback loop** — the divergence is self-reinforcing, not self-limiting.
 
-### 3.3 Phase 3: The novel algorithm — A-SYNC
+### 3.3 Phase 3: An attempted fix — A-SYNC (later invalidated)
 
-Our proposed solution, **A-SYNC** (ALS-directed Stochastic training with gradient iNjection and Constant strength), keeps ALS's strength while removing its fatal flaw:
+We designed **A-SYNC** (ALS-directed Stochastic training with gradient iNjection and Constant strength) to keep ALS's ability to find optimal directions while avoiding the fatal weight modification:
 
 ```
 Protocol A (old)                A-SYNC (new)
@@ -113,9 +115,9 @@ Protocol A (old)                A-SYNC (new)
                                   (gradient bias, not weight change)
 ```
 
-The key insight: **the model's forward pass never sees the ALS-modified weights.** The ALS solution is converted into a *directional gradient signal* that gently steers SGD over many steps, instead of a hard weight jump that triggers the residual amplification cascade. This is the algorithmic equivalent of physical therapy versus surgery — it guides rather than replaces.
+The design intent: convert the ALS solution into a *directional gradient signal* that steers SGD, instead of a hard weight jump. **However, rigorous verification invalidated this algorithm** (see §4.1): the injection as implemented was a timing no-op (it never reached any parameter update), and even when timed correctly it is neutral-to-harmful. The convergence observed was that of plain SGD.
 
-### 3.4 Phase 4: Systematic variant optimization
+### 3.4 Phase 4: Variant exploration — re-interpreted
 
 We explored 12 variants of A-SYNC to find the best configuration:
 
@@ -126,66 +128,66 @@ We explored 12 variants of A-SYNC to find the best configuration:
 | Cosine (32c) | cosine-decayed sync & lr | 13.2 (plateau) |
 | **CONSTANT (24c)** | **constant sync=0.05, lr=2e-4** | **9.0** |
 | CONSTANT (48c) | extended to 48 cycles | 7.6 |
-| **CONSTANT (96c)** | **extended to 96 cycles** | **6.82 ★ BEST** |
+| **CONSTANT (96c)** | **extended to 96 cycles** | **6.82** |
 | A-CYCLE (3×8) | warm restart per block | 16.5 |
 | +EMA | smoothed δ across cycles | 0.5B: 5.5 |
 | +Aligned | inject only grad-aligned δ | 0.5B: 5.5 |
 | +SWA | weight averaging | 10.5 |
 | A-PROBE (r=64) | low-rank probe bypass | 22.8 |
 
-Three findings stand out:
-
-1. **Decay schedules are harmful** — every form of decay (exponential, cosine) suppresses the ALS signal exactly when the model still needs it. Constant-strength injection sustains convergence through 96 cycles, proving that ALS's δ **auto-decays** as the body adapts — external decay is redundant and self-defeating. The 96c run showed the "C44 plateau" at 48c was a *pseudo-plateau*: the per-cycle improvement decays as a power law (−0.1 → −0.01 PPL/cycle) but never reaches zero, and PPL continued to fall from 7.6 to 6.82.
-
-2. **Perturbation is counterproductive on deep models** — removing it gains +9.2 PPL.
-
-3. **The bottleneck hypothesis is confirmed but costly** — constraining ALS to a 64-dim probe eliminates divergence (proving amplification is the mechanism) but caps quality at PPL 22.8.
+With the injection shown to be a no-op, these results must be **re-interpreted**: the real variable driving the ranking was the **learning-rate schedule**, not the injection strength. CONSTANT (lr=2e-4 fixed) sustains SGD convergence; Cosine decays lr→0, starving the tail of SGD progress and plateauing at PPL 13.2. The power-law tail (−0.01 PPL/cycle at C88) is SGD's own convergence law. Two observations remain informative: **perturbation is counterproductive on deep models** (+9.2 PPL), and the **low-rank probe eliminates divergence** (confirming amplification as the mechanism) but caps quality at PPL 22.8.
 
 ---
 
 ## 4. Results
 
-### 4.1 A-SYNC achieves the first convergence on 28 layers
+### 4.1 The decisive control: what actually converges on 28 layers
 
-**Qwen2.5-7B (28L) — the model that previously diverged 11/11 times:**
+**Qwen2.5-7B (28L) — the model that previously diverged 11/11 times under Protocol A:**
 
 ```
-A-SYNC CONSTANT 24c:  PPL 61.8 → 9.0
-A-SYNC CONSTANT 48c:  PPL 58.8 → 7.6
-A-SYNC CONSTANT 96c:  PPL 59.1 → 6.82   (still improving — power-law tail)
-Old Protocol A:       11/11 DIVERGED
-AdamW baseline:       PPL 1.25 (800 steps) — still superior, but A-SYNC now converges
+"A-SYNC" CONSTANT 24c:  PPL 61.8 → 9.0
+"A-SYNC" CONSTANT 48c:  PPL 58.8 → 7.6
+"A-SYNC" CONSTANT 96c:  PPL 59.1 → 6.82   (still improving — power-law tail)
+Pure SGD 96c (control):  PPL 61.4 → 6.83   (identical budget, no ALS machinery)
+Old Protocol A:         11/11 DIVERGED
+AdamW baseline:         PPL 1.25 (800 steps) — best absolute quality
 ```
 
-This is the first demonstration that ALS-based post-training can be made stable on a 28-layer LLM. The 8.7× improvement over baseline (59.1→6.82) makes A-SYNC a viable *complement* — not replacement — for gradient methods on deep models.
+**The decisive control — A-SYNC injection is vacuous:**
 
-**The convergence law**: extending from 48 to 96 cycles revealed that the apparent "C44 plateau" (PPL 7.6) was a *pseudo-plateau*, not a true asymptote. Per-cycle improvement decays as a power law but never reaches zero (still −0.013 PPL/cycle at C88), and PPL continued monotonically to 6.82. Fitting $PPL(c) = ppl_{inf} + A \cdot c^{-\alpha}$ on the 96-point trajectory gives:
+Before attributing any convergence to A-SYNC, we ran a matched-budget **pure SGD** control on the same Qwen7B (identical budget: 4800 steps, lr=2e-4, momentum=0, wd=0.01; identical eval points):
 
-$$PPL(c) = 3.48 + 61.3 \cdot c^{-0.70}$$
+| Metric | "A-SYNC" 96c | Pure SGD 96c |
+|--------|:-----------:|:------------:|
+| Final PPL | 6.82 | **6.83** |
+| Trajectory correlation | — | **0.99981** |
 
-which predicts a **true A-SYNC-specific asymptote of PPL ≈ 3.5** — reachable only asymptotically (PPL≈5.0 at C200). This is not the model's capacity limit (AdamW reaches 1.25) but a structural ceiling specific to A-SYNC's lm_head-only ALS guidance.
+The two trajectories are indistinguishable (mean per-cycle difference 0.116 PPL). **Pure SGD alone reaches PPL 6.83; the injection contributed nothing.** Two additional diagnostics at OPT-125m scale confirm this: (a) the injection as implemented is a *timing no-op* — it is added to the gradient buffer *after* `optimizer.step()` and cleared by the next `zero_grad()`, so it never reaches any parameter update; (b) even with corrected timing, a sync sweep (0.05 / 0.5 / 2.0) never beats pure SGD (536.0 PPL) and is mildly harmful (550–559).
 
-**Why power-law convergence**: A-SYNC's constant injection strength combines with naturally decaying δ. Because ‖δ‖ ∝ the model's output error, the body's improvement shrinks δ, which weakens the injection, slowing further improvement — a self-damping feedback loop that produces power-law (not exponential) convergence without any external decay schedule.
+**Correct interpretation of the observed convergence**: plain SGD post-training on 28L Qwen7B converges to ~6.8 PPL in 4800 steps with a power-law tail (still −0.013 PPL/cycle at C88; fit $PPL(c) = 3.48 + 61.3\,c^{-0.70}$, asymptote ≈3.5). The "CONSTANT vs Cosine" variant ranking is a **learning-rate schedule** effect — CONSTANT holds lr=2e-4, Cosine decays lr→0 and plateaus at 13.2 — not an injection-strength effect.
 
 ### 4.2 FLOPs-normalized comparison — where each method wins
 
-We compared A-SYNC CONSTANT vs AdamW full-rank vs LoRA on OPT-125m with matched FLOPs budgets:
+We compared plain-SGD-driven post-training vs AdamW full-rank vs LoRA on OPT-125m with matched FLOPs budgets:
 
 | Protocol | Final PPL | FLOPs (T) | PPL/TFLOP |
 |----------|-----------|-----------|-----------|
 | AdamW Full-Rank | **23.2** | 0.911 | 25.5 |
 | LoRA AdamW r=8 | 37.3 | 0.013 | **2812** |
-| A-SYNC 48c | 60.7 | 1.846 | 32.9 |
+| SGD-driven (12L, 2448 steps) | 60.7 | 1.846 | 32.9 |
 
-**Efficiency ranking**: LoRA is 87× more compute-efficient than A-SYNC. AdamW achieves the best absolute PPL. A-SYNC is the only method that *converges at all* on 28L models via ALS-based methods — its value proposition is **stability on deep models**, not efficiency on shallow ones.
+**Efficiency ranking**: LoRA is 87× more compute-efficient than full-rank training. AdamW achieves the best absolute PPL. On shallow models the gradient-based methods are simply better on every axis — reinforcing that ALS-based machinery (weight-modifying or gradient-injecting) provides no post-training advantage.
 
-### 4.3 Where does A-SYNC belong?
+### 4.3 Where does ALS-based post-training stand?
 
 | Model depth | Recommended | Why |
 |-------------|-------------|-----|
-| ≤12 layers | AdamW or LoRA | A-SYNC has no advantage (amplification ≈2.3×) |
-| 12–24 layers | AdamW or LoRA | A-SYNC converges but no benefit |
-| **≥28 layers** | **A-SYNC CONSTANT** | **The only ALS-based method that converges** |
+| ≤12 layers | AdamW or LoRA | ALS-based methods converge but are neither better nor cheaper |
+| 12–24 layers | AdamW or LoRA | ALS converges but offers no advantage |
+| **≥28 layers** | **Plain SGD (lr fixed) or AdamW** | **ALS weight modification diverges; gradient-repair is ineffective — plain SGD converges to 6.8 PPL** |
+
+The honest conclusion: for post-training, **plain SGD with a sustained learning rate already converges on 28L models**, and ALS-based methods (whether weight-modifying or gradient-injecting) offer no benefit over it. The FLOPs-normalized comparison (§4.2) confirms AdamW is best in absolute quality and LoRA best in efficiency on shallow models.
 
 ---
 
@@ -193,32 +195,32 @@ We compared A-SYNC CONSTANT vs AdamW full-rank vs LoRA on OPT-125m with matched 
 
 ### 5.1 For the field
 
-1. **A rigorous, controlled answer to a long-standing failure**: prior work blamed "perturbation," "optimizer mismatch," or "numerical instability" for ALS divergence. We proved it is specifically the *weight-modification* behavior of ALS interacting with residual connections — opening the door for other interventions to be designed against this known mechanism.
+1. **A rigorous, controlled answer to a long-standing failure**: prior work blamed "perturbation," "optimizer mismatch," or "numerical instability" for ALS divergence. We proved it is specifically the *weight-modification* behavior of ALS interacting with residual connections — a falsifiable claim backed by a 5-condition controlled ablation on a 28-layer model.
 
-2. **A causal theory with predictive power**: the residual amplification framework ($\rho \approx 1.08$, $L_{\max} \approx 26$) predicts divergence boundaries across architectures and can guide architectural choices (gated residuals, MoE) for future ALS-based training.
+2. **A causal theory with predictive power**: the residual amplification framework ($\rho \approx 1.08$, $L_{\max} \approx 26$) predicts divergence boundaries across architectures and can guide architectural choices (gated residuals, MoE) for any future ALS-based training attempt.
 
-3. **A new algorithm with a transferable design pattern**: "solve-then-inject-as-gradient" — keeping the closed-form solver's ability to find directions while shielding the forward pass from hard weight changes — is a reusable pattern beyond LLMs (any residual-connection architecture).
+3. **A rigorous negative result**: "repairing" ALS by injecting its closed-form solution as a gradient bias does not work — the injection was a timing no-op in our implementation, and even when correctly timed, it is redundant with the CE gradient and never outperforms plain SGD (verified at two scales, including a decisive matched-budget 7B control with trajectory correlation 0.9998). This negative result saves future researchers from a plausible-sounding but ineffective design pattern, and the timing audit itself carries a methodology lesson: verify that each hybrid component actually modifies what it claims to, at the time it claims to.
+
+4. **A re-interpreted empirical finding**: the perceived "algorithm ranking" among our variants is driven by the **learning-rate schedule** (sustained lr converges; lr→0 cosine plateaus), not by ALS-related parameters. Plain SGD post-training on 28L Qwen7B converges to ~6.8 PPL in 4800 steps — a clean, reproducible baseline that the field can build on.
 
 ### 5.2 Limitations
 
-- A-SYNC converges but remains **5.45× behind AdamW** in absolute PPL on 7B (6.82 vs 1.25), and power-law fitting predicts a **structural asymptote of PPL ≈ 3.5 (2.8× gap)** — it solves the *stability* problem and reveals the *quality ceiling*, but does not eliminate it.
-- The quality ceiling is likely caused by A-SYNC's lm_head-only ALS guidance (body layers rely on pure SGD), a hypothesis testable via multi-layer ALS.
-- Single dataset (WikiText-2), single model family at the 7B scale; cross-domain validation is future work.
+- The ALS-divergence diagnosis and theory are validated only on WikiText-2 and a single model family at 7B scale; cross-domain validation remains future work.
 - The FLOPs accounting uses parameter-count multipliers rather than full operator-level profiling.
+- The gradient-injection negative result was verified at OPT-125m and Qwen7B but not across the full model family; the conclusion (injection redundant with CE gradient) is consistent at both scales tested.
 
 ### 5.3 Future directions
 
-1. **Multi-layer ALS** — guide 2–3 attention layers in addition to lm_head; the top hypothesis for breaking the PPL≈3.5 ceiling
-2. **A-SYNC+EMA/Aligned on 7B** — scripts exist; may reduce noise in the power-law tail
-3. **A-PROBE with larger rank** (256/512/1024) — find the expressiveness/safety sweet spot
-4. **Cross-domain validation** — C4, downstream tasks (HellaSwag, MMLU)
-5. **Test the C200 projection (PPL≈5.0)** — a 128–192c run would confirm the power-law extrapolation
+1. **Cross-domain validation of the divergence diagnosis** — C4, downstream tasks (HellaSwag, MMLU): confirm the ALS weight-modification divergence is not WikiText-2-specific
+2. **ALS on blocks SGD cannot reach** — the one untested salvage direction: apply ALS as a solver for objectives where gradient descent is structurally weak (e.g., attention logit alignment), rather than as a redundant CE-gradient direction
+3. **A-PROBE with larger rank** (256/512/1024) — the low-rank probe does eliminate divergence; a wider bottleneck may preserve quality
+4. **Verify the lr-schedule interpretation** — a controlled sweep (fixed lr vs cosine vs warm-restart) without any ALS machinery would cleanly establish the learning-rate effect we now attribute the variant ranking to
 
 ---
 
 ## 6. Conclusion
 
-This project transformed a persistent failure mode — ALS-based post-training diverging on deep LLMs — into a solved stability problem with a revealed quality ceiling. Through controlled experiments, we identified the exact cause (ALS weight modification triggering residual amplification); through causal analysis, we explained why (ρ≈1.08 per layer, L_max≈26); through algorithmic design, we fixed it (A-SYNC gradient injection, first convergence at 28L); and through extended 96-cycle training, we characterized *how* it converges (power-law convergence driven by auto-decaying δ) and *where* it is limited (a structural asymptote of PPL≈3.5, likely set by lm_head-only ALS guidance). The work provides a reproducible diagnostic methodology, a transferable algorithmic pattern ("solve-then-inject-as-gradient"), and a falsifiable account of the method's limits — with multi-layer ALS as the clearest path toward breaking the quality ceiling.
+This project began with a persistent failure mode — ALS-based post-training diverging on deep LLMs — and ended with a rigorously established diagnosis, a causal theory, and a hard-won negative result. Through a controlled ablation on Qwen2.5-7B, we proved that **ALS weight modification — not SGD, perturbation, or hook overhead — is the sole sufficient cause of divergence** (ALS-only diverges in one step; all ALS-free conditions converge). Through causal analysis, we explained why: residual connections amplify the perturbation by ρ≈1.08 per layer, so 28 layers produce ≈8× amplification beyond SGD's recovery capacity, predicting the observed depth boundary L_max≈26. We then tested the natural repair — injecting ALS's closed-form solution as a gradient bias (A-SYNC) — and verified, through matched-budget controls at two scales, that **this repair is ineffective**: the injection was a timing no-op in our implementation, and even when correctly timed it is redundant with the CE gradient and never outperforms plain SGD (7B trajectory correlation 0.9998; pure SGD reaches 6.83 vs A-SYNC's 6.82). The convergence previously attributed to A-SYNC is the convergence of plain SGD itself, and the apparent variant ranking is a learning-rate-schedule effect. The project's lasting value is a reproducible diagnostic methodology, a falsifiable causal theory of ALS divergence in residual networks, a demonstrated negative result that spares future researchers a plausible-but-ineffective design, and an honest account of how a no-op component can masquerade as an algorithmic contribution until it is rigorously controlled against.
 
 ---
 
