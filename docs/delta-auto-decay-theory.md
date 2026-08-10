@@ -1,8 +1,12 @@
 # Why Does A-SYNC CONSTANT Converge Without External Decay?
 
+> **⚠️ SUPERSEDED — READ THIS FIRST**
+>
+> **2026-07-24 update**: The "gradient injection" this theory explains was subsequently proven to be a **timing no-op** in the implementation (injected after `optimizer.step()`, cleared by the next `zero_grad()`), and a matched-budget pure-SGD control on Qwen7B replicated the "A-SYNC" trajectory exactly (correlation 0.99981; 6.83 vs 6.82 PPL). **The auto-decay mechanism described here is the convergence dynamics of plain SGD post-training, not of any ALS injection.** The power-law convergence, the lr-schedule explanation of the CONSTANT-vs-Cosine ranking, and the fixed-point argument survive only re-assigned to SGD dynamics. See [`docs/diag-injection-report.md`](diag-injection-report.md) and the honestly rewritten [`docs/final-report.md`](final-report.md).
+
 **A mathematical analysis of the auto-decaying ALS delta**
 **Date**: 2026-07-24
-**Status**: Theory note — grounding the empirical observation (C44 convergence at 48c) in a formal argument
+**Status**: Theory note — grounding the empirical observation (C44 convergence at 48c) in a formal argument. **Partially superseded** — see banner above.
 
 ---
 

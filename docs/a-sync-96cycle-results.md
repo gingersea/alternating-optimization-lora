@@ -1,5 +1,9 @@
 # A-SYNC CONSTANT 96-Cycle — Extended Training Results
 
+> **⚠️ SUPERSEDED — READ THIS FIRST**
+>
+> **2026-07-24 update**: The "A-SYNC" gradient injection described in this document was subsequently proven to be a **timing no-op** — it was added to the gradient buffer *after* `optimizer.step()` and cleared by the next `zero_grad()`, so it never reached any parameter update. A matched-budget **pure SGD** control on the same Qwen7B reached PPL 6.83 (vs 6.82 for "A-SYNC", trajectory correlation 0.99981). **The convergence reported here is the convergence of plain SGD, not of the injection.** See [`docs/diag-injection-report.md`](diag-injection-report.md) and the honestly rewritten [`docs/final-report.md`](final-report.md). The empirical trajectory and power-law fit below remain valid as *pure-SGD post-training* data.
+
 > **Date**: 2026-07-24
 > **Model**: Qwen2.5-7B (28L)
 > **Config**: sync=0.05 constant, lr=2e-4 constant, no decay, no perturb

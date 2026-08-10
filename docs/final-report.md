@@ -224,4 +224,4 @@ This project began with a persistent failure mode — ALS-based post-training di
 
 ---
 
-*All experiments are reproducible. Scripts: `experiments/_diverge_cause_7b.py`, `experiments/_a_sync_*.py`, `experiments/_flops_sweep.py`. Data: `runs/`. Full docs: `docs/`.*
+*All experiments are reproducible. Core scripts: `experiments/_diverge_cause_7b.py` (ablation), `experiments/_pure_sgd_96c_7b.py` (decisive control), `experiments/_flops_sweep.py` (FLOPs comparison), `experiments/_a_sync_*.py` (historical, see the no-op diagnosis in `docs/diag-injection-report.md`). Data: `runs/`. Full docs: `docs/`.*
