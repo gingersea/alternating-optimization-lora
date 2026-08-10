@@ -116,7 +116,7 @@ def run(label, mode, rank=None):
             b_dev = {k: v.to(device) for k, v in b.items() if isinstance(v, torch.Tensor)}
             labels = b_dev["labels"]
             hidden_states = []
-            def capture(_mod, _inp, out): hidden_states.append(out[0].detach())
+            def capture(_mod, _inp, out): hidden_states.append(out.detach())
             handle = m.model.decoder.final_layer_norm.register_forward_hook(capture)
             try:
                 with torch.no_grad():
