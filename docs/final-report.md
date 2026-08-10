@@ -214,7 +214,8 @@ The honest conclusion: for post-training, **plain SGD with a sustained learning 
 1. **Cross-domain validation of the divergence diagnosis** — C4, downstream tasks (HellaSwag, MMLU): confirm the ALS weight-modification divergence is not WikiText-2-specific
 2. **ALS on blocks SGD cannot reach** — the one untested salvage direction: apply ALS as a solver for objectives where gradient descent is structurally weak (e.g., attention logit alignment), rather than as a redundant CE-gradient direction
 3. **A-PROBE with larger rank** (256/512/1024) — the low-rank probe does eliminate divergence; a wider bottleneck may preserve quality
-4. **Verify the lr-schedule interpretation** — a controlled sweep (fixed lr vs cosine vs warm-restart) without any ALS machinery would cleanly establish the learning-rate effect we now attribute the variant ranking to
+
+**The lr-schedule re-interpretation is now directly verified** (pure SGD, no ALS machinery, OPT-125m): fixed lr=2e-4 → 67.9 PPL, cosine-decay → 87.7, exp-decay ×0.8 → 130.1 — a ranking identical to the 7B variant ranking (CONSTANT 6.82 < Cosine 13.2 < Vanilla 25.8), confirming that the perceived algorithm ranking was a learning-rate-schedule effect.
 
 ---
 

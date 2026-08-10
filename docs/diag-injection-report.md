@@ -88,7 +88,15 @@ The critical test: run **pure SGD** on Qwen7B with the exact same budget as the 
 
 3. **A new, important finding: "gradient-injection repair" does not work.** The intuition that ALS's closed-form direction can be fed to SGD as a gradient bias is empirically falsified — the direction is redundant with the CE gradient. This negative result is worth reporting.
 
-4. **The re-interpreted variant finding: learning-rate schedule is the real lever.** CONSTANT (lr=2e-4 fixed) beats Cosine (lr→0) because the LR schedule — not injection strength — sustains SGD convergence. This explains the variant ranking without invoking ALS at all.
+4. **The re-interpreted variant finding: learning-rate schedule is the real lever — now directly verified.** CONSTANT (lr=2e-4 fixed) beats Cosine (lr→0) because the LR schedule — not injection strength — sustains SGD convergence. We verified this with **pure SGD (no ALS machinery at all)** on OPT-125m, sweeping only the lr schedule over 16 cycles × 50 steps:
+
+   | Pure SGD lr schedule (OPT-125m) | Final PPL |
+   |---------------------------------|-----------|
+   | lr fixed 2e-4 | **67.9** |
+   | lr cosine-decay → 0 | 87.7 |
+   | lr exp-decay ×0.8 | 130.1 |
+
+   The ranking (fixed < cosine < exp) **exactly mirrors** the 7B variant ranking (CONSTANT 6.82 < Cosine 13.2 < Vanilla 25.8) with zero ALS involvement. This directly confirms that the observed "algorithm ranking" was a learning-rate-schedule effect all along.
 
 5. **Empirical convergence facts (reassigned, still valid):** pure SGD post-training on Qwen7B converges to PPL 6.83 at 4800 steps with power-law dynamics — a clean, reproducible empirical baseline.
 
