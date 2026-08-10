@@ -212,10 +212,29 @@ The honest conclusion: for post-training, **plain SGD with a sustained learning 
 ### 5.3 Future directions
 
 1. **Cross-domain validation of the divergence diagnosis** — C4, downstream tasks (HellaSwag, MMLU): confirm the ALS weight-modification divergence is not WikiText-2-specific
-2. **ALS on blocks SGD cannot reach** — the one untested salvage direction: apply ALS as a solver for objectives where gradient descent is structurally weak (e.g., attention logit alignment), rather than as a redundant CE-gradient direction
-3. **A-PROBE with larger rank** (256/512/1024) — the low-rank probe does eliminate divergence; a wider bottleneck may preserve quality
+2. **ALS on blocks SGD cannot reach** — the remaining untested salvage direction: apply ALS as a solver for objectives where gradient descent is structurally weak (e.g., attention logit alignment), rather than as a redundant CE-gradient direction
+3. **Closed: the low-rank-probe and soft-target paths** — a wider probe bottleneck (r up to 1024) and closed-form soft-target (distillation) ALS were both tested on the valid task and add no quality over pure SGD; the probe's only confirmed value remains eliminating divergence on deep models (at the cost of capping quality at PPL 22.8 on 7B)
 
-**The lr-schedule re-interpretation is now directly verified** (pure SGD, no ALS machinery, OPT-125m): fixed lr=2e-4 → 67.9 PPL, cosine-decay → 87.7, exp-decay ×0.8 → 130.1 — a ranking identical to the 7B variant ranking (CONSTANT 6.82 < Cosine 13.2 < Vanilla 25.8), confirming that the perceived algorithm ranking was a learning-rate-schedule effect.
+**The lr-schedule re-interpretation is now directly verified** (pure SGD, no ALS machinery, OPT-125m, valid task): fixed lr=2e-4 → 50.7 PPL, cosine-decay → 54.7, exp-decay ×0.8 → 57.1 — a ranking identical to the 7B variant ranking (CONSTANT 6.82 < Cosine 13.2 < Vanilla 25.8), confirming that the perceived algorithm ranking was a learning-rate-schedule effect.
+
+### 4.4 Evaluation-harness audit — OPT-scale experiments corrected
+
+During verification of the lr-schedule result we discovered **two evaluation-harness bugs** that had corrupted all OPT-125m absolute PPL numbers (but not the 7B results, which use the model's own tokenizer):
+
+1. **Cross-vocabulary tokenizer mismatch**: the OPT-125m scripts loaded the `gpt2` tokenizer and fed GPT-2 token ids to the OPT model. The two vocabularies differ almost entirely (of the first 50,257 ids, only 2 map to the same token), so the model was trained/evaluated on a semantically scrambled cross-vocabulary mapping task. The apparent "pretrained PPL ≈ 2246" was an artifact.
+2. **Unmasked padding labels**: `labels = input_ids.clone()` scored pad positions too; pad tokens are trivially predictable, deflating PPL. With `labels[mask==0] = -100`, the pretrained OPT-125m wikitext-2 test PPL is **73.7** (sane; generation is coherent).
+
+Corrected OPT-125m numbers (OPT tokenizer + pad-masked labels; fixed lr=2e-4, 16c):
+
+| Condition | Final PPL |
+|-----------|-----------|
+| Pretrained baseline | 73.7 |
+| Pure SGD | 50.7 |
+| Probe r=64 / r=256 / r=1024 | 50.7 / 50.6 / 50.7 |
+| SGD lr FIXED / cosine / exp×0.8 | 50.7 / 54.7 / 57.1 |
+| A-KD: SGD soft-KL / closed-form ALS | 52.4 / 52.6 |
+
+**Two further null results on the valid task**: (a) the low-rank ALS probe provides **no quality gain at any rank** (50.6–50.7 vs pure SGD 50.7, even with full-batch ALS solves); (b) the one genuinely non-redundant ALS objective — closed-form soft-target matching of a teacher's logit distribution (A-KD) — also provides **no incremental value** over SGD on the same objective (52.6 vs 52.4). Training on the valid task is a net improvement (73.7 → 50.7), so the nulls are not artifacts of a broken task.
 
 ---
 
@@ -225,4 +244,4 @@ This project began with a persistent failure mode — ALS-based post-training di
 
 ---
 
-*All experiments are reproducible. Core scripts: `experiments/_diverge_cause_7b.py` (ablation), `experiments/_pure_sgd_96c_7b.py` (decisive control), `experiments/_flops_sweep.py` (FLOPs comparison), `experiments/_a_sync_*.py` (historical, see the no-op diagnosis in `docs/diag-injection-report.md`). Data: `runs/`. Full docs: `docs/`.*
+*All experiments are reproducible. Core scripts: `experiments/_diverge_cause_7b.py` (ablation), `experiments/_pure_sgd_96c_7b.py` (decisive control), `experiments/_flops_sweep.py` (FLOPs comparison), `experiments/_probe_rank_sweep.py` (probe-rank sweep, valid task), `experiments/_kd_als.py` (A-KD soft-target ALS), `experiments/_lr_schedule_sgd.py` (lr-schedule verification, valid task), `experiments/_a_sync_*.py` (historical, see the no-op diagnosis in `docs/diag-injection-report.md`). Data: `runs/`. Full docs: `docs/`.*
