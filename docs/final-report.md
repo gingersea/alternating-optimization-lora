@@ -10,7 +10,7 @@
 
 This project investigates **Alternating Least Squares (ALS)-based post-training** of large language models (LLMs) — an alternative to gradient-based fine-tuning that solves closed-form least-squares problems on output layers instead of relying solely on backpropagation. The central problem: while ALS-based methods work on shallow models (≤24 layers), they **catastrophically diverge on deep models (≥28 layers)** — 11/11 independent attempts on Qwen2.5-7B failed.
 
-We make four contributions: **(1) a controlled ablation experiment** proving that ALS weight modification — not SGD, not perturbation noise, not hook overhead — is the sole sufficient cause of divergence; **(2) a causal theory** showing that residual connections amplify ALS perturbations by ≈1.08× per layer (1.08²⁷≈8× at 28 layers), far beyond SGD's recovery capacity; **(3) a novel algorithm, A-SYNC**, which keeps ALS's ability to find optimal directions but injects them as **gradient biases** rather than weight modifications — achieving the first-ever convergence of ALS-based post-training on a 28-layer model (PPL 58.8→7.6); **(4) a FLOPs-normalized comparison** establishing where A-SYNC, AdamW, and LoRA each excel.
+We make four contributions: **(1) a controlled ablation experiment** proving that ALS weight modification — not SGD, not perturbation noise, not hook overhead — is the sole sufficient cause of divergence; **(2) a causal theory** showing that residual connections amplify ALS perturbations by ≈1.08× per layer (1.08²⁷≈8× at 28 layers), far beyond SGD's recovery capacity; **(3) a novel algorithm, A-SYNC**, which keeps ALS's ability to find optimal directions but injects them as **gradient biases** rather than weight modifications — achieving the first-ever convergence of ALS-based post-training on a 28-layer model (PPL 59.1→6.82, 8.7× baseline improvement) and revealing a power-law convergence law (asymptote PPL≈3.5); **(4) a FLOPs-normalized comparison** establishing where A-SYNC, AdamW, and LoRA each excel.
 
 ---
 
@@ -125,7 +125,8 @@ We explored 12 variants of A-SYNC to find the best configuration:
 | No-Perturb (8c) | remove perturbation phase | 16.6 |
 | Cosine (32c) | cosine-decayed sync & lr | 13.2 (plateau) |
 | **CONSTANT (24c)** | **constant sync=0.05, lr=2e-4** | **9.0** |
-| **CONSTANT (48c)** | **extended to 48 cycles** | **7.6 ★ BEST** |
+| CONSTANT (48c) | extended to 48 cycles | 7.6 |
+| **CONSTANT (96c)** | **extended to 96 cycles** | **6.82 ★ BEST** |
 | A-CYCLE (3×8) | warm restart per block | 16.5 |
 | +EMA | smoothed δ across cycles | 0.5B: 5.5 |
 | +Aligned | inject only grad-aligned δ | 0.5B: 5.5 |
@@ -134,7 +135,7 @@ We explored 12 variants of A-SYNC to find the best configuration:
 
 Three findings stand out:
 
-1. **Decay schedules are harmful** — every form of decay (exponential, cosine) suppresses the ALS signal exactly when the model still needs it. Constant-strength injection converges naturally at C44 (PPL 7.6), proving that ALS's δ **auto-decays** as the body adapts — external decay is redundant and self-defeating.
+1. **Decay schedules are harmful** — every form of decay (exponential, cosine) suppresses the ALS signal exactly when the model still needs it. Constant-strength injection sustains convergence through 96 cycles, proving that ALS's δ **auto-decays** as the body adapts — external decay is redundant and self-defeating. The 96c run showed the "C44 plateau" at 48c was a *pseudo-plateau*: the per-cycle improvement decays as a power law (−0.1 → −0.01 PPL/cycle) but never reaches zero, and PPL continued to fall from 7.6 to 6.82.
 
 2. **Perturbation is counterproductive on deep models** — removing it gains +9.2 PPL.
 
@@ -149,12 +150,22 @@ Three findings stand out:
 **Qwen2.5-7B (28L) — the model that previously diverged 11/11 times:**
 
 ```
-A-SYNC CONSTANT 48c:  PPL 58.8 → 7.6   (converged at cycle 44)
+A-SYNC CONSTANT 24c:  PPL 61.8 → 9.0
+A-SYNC CONSTANT 48c:  PPL 58.8 → 7.6
+A-SYNC CONSTANT 96c:  PPL 59.1 → 6.82   (still improving — power-law tail)
 Old Protocol A:       11/11 DIVERGED
 AdamW baseline:       PPL 1.25 (800 steps) — still superior, but A-SYNC now converges
 ```
 
-This is the first demonstration that ALS-based post-training can be made stable on a 28-layer LLM. The 7.7× improvement over baseline (58.8→7.6) makes A-SYNC a viable *complement* — not replacement — for gradient methods on deep models.
+This is the first demonstration that ALS-based post-training can be made stable on a 28-layer LLM. The 8.7× improvement over baseline (59.1→6.82) makes A-SYNC a viable *complement* — not replacement — for gradient methods on deep models.
+
+**The convergence law**: extending from 48 to 96 cycles revealed that the apparent "C44 plateau" (PPL 7.6) was a *pseudo-plateau*, not a true asymptote. Per-cycle improvement decays as a power law but never reaches zero (still −0.013 PPL/cycle at C88), and PPL continued monotonically to 6.82. Fitting $PPL(c) = ppl_{inf} + A \cdot c^{-\alpha}$ on the 96-point trajectory gives:
+
+$$PPL(c) = 3.48 + 61.3 \cdot c^{-0.70}$$
+
+which predicts a **true A-SYNC-specific asymptote of PPL ≈ 3.5** — reachable only asymptotically (PPL≈5.0 at C200). This is not the model's capacity limit (AdamW reaches 1.25) but a structural ceiling specific to A-SYNC's lm_head-only ALS guidance.
+
+**Why power-law convergence**: A-SYNC's constant injection strength combines with naturally decaying δ. Because ‖δ‖ ∝ the model's output error, the body's improvement shrinks δ, which weakens the injection, slowing further improvement — a self-damping feedback loop that produces power-law (not exponential) convergence without any external decay schedule.
 
 ### 4.2 FLOPs-normalized comparison — where each method wins
 
@@ -190,23 +201,24 @@ We compared A-SYNC CONSTANT vs AdamW full-rank vs LoRA on OPT-125m with matched 
 
 ### 5.2 Limitations
 
-- A-SYNC converges but remains **6.1× behind AdamW** in absolute PPL on 7B (7.6 vs 1.25) — it solves the *stability* problem, not the *quality ceiling*.
+- A-SYNC converges but remains **5.45× behind AdamW** in absolute PPL on 7B (6.82 vs 1.25), and power-law fitting predicts a **structural asymptote of PPL ≈ 3.5 (2.8× gap)** — it solves the *stability* problem and reveals the *quality ceiling*, but does not eliminate it.
+- The quality ceiling is likely caused by A-SYNC's lm_head-only ALS guidance (body layers rely on pure SGD), a hypothesis testable via multi-layer ALS.
 - Single dataset (WikiText-2), single model family at the 7B scale; cross-domain validation is future work.
 - The FLOPs accounting uses parameter-count multipliers rather than full operator-level profiling.
 
 ### 5.3 Future directions
 
-1. **A-SYNC+EMA/Aligned on 7B** — the scripts exist; running them could narrow the AdamW gap
-2. **Longer runs (96–128 cycles)** — CONSTANT 48c was still improving at C44; longer runs may approach PPL 3–5
-3. **Multi-layer ALS** — guiding 2–3 attention layers in addition to lm_head
-4. **A-PROBE with larger rank** (256/512/1024) — find the expressiveness/safety sweet spot
-5. **Cross-domain validation** — C4, downstream tasks (HellaSwag, MMLU)
+1. **Multi-layer ALS** — guide 2–3 attention layers in addition to lm_head; the top hypothesis for breaking the PPL≈3.5 ceiling
+2. **A-SYNC+EMA/Aligned on 7B** — scripts exist; may reduce noise in the power-law tail
+3. **A-PROBE with larger rank** (256/512/1024) — find the expressiveness/safety sweet spot
+4. **Cross-domain validation** — C4, downstream tasks (HellaSwag, MMLU)
+5. **Test the C200 projection (PPL≈5.0)** — a 128–192c run would confirm the power-law extrapolation
 
 ---
 
 ## 6. Conclusion
 
-This project transformed a persistent failure mode — ALS-based post-training diverging on deep LLMs — into a solved stability problem. Through controlled experiments, we identified the exact cause (ALS weight modification triggering residual amplification); through causal analysis, we explained why (ρ≈1.08 per layer, L_max≈26); and through algorithmic design, we fixed it (A-SYNC gradient injection, first convergence at 28L with PPL 7.6). The work provides both a reproducible diagnostic methodology and a transferable algorithmic pattern, with clear paths toward closing the remaining gap to gradient-based methods.
+This project transformed a persistent failure mode — ALS-based post-training diverging on deep LLMs — into a solved stability problem with a revealed quality ceiling. Through controlled experiments, we identified the exact cause (ALS weight modification triggering residual amplification); through causal analysis, we explained why (ρ≈1.08 per layer, L_max≈26); through algorithmic design, we fixed it (A-SYNC gradient injection, first convergence at 28L); and through extended 96-cycle training, we characterized *how* it converges (power-law convergence driven by auto-decaying δ) and *where* it is limited (a structural asymptote of PPL≈3.5, likely set by lm_head-only ALS guidance). The work provides a reproducible diagnostic methodology, a transferable algorithmic pattern ("solve-then-inject-as-gradient"), and a falsifiable account of the method's limits — with multi-layer ALS as the clearest path toward breaking the quality ceiling.
 
 ---
 
