@@ -92,9 +92,13 @@ We fixed the timing and ran the decisive control: **matched-budget pure SGD vers
 
 So the design space of "salvaging ALS" is closed. In every case, a matched SGD control matches or beats the ALS mechanism.
 
-**[11:30-13:00] 6. CONCLUSION FROM THE FRAMEWORK — what works (SLIDE: Finding 4 + Verified Solutions)**
+**[11:30-13:15] 6. RESOLVING THE RESEARCH QUESTION — what works (SLIDE: Finding 4 + Verified Solutions)**
 
-But a negative result is only valuable if you point to what *does* work — and the 2×2 framework gives us the clean answer, on Qwen2.5-7B at 800 steps, three seeds:
+Let me now close the loop and answer the two research questions I posed at the start — because that is what "solving" means for this project: not salvaging a broken method, but answering the questions definitively.
+
+**Question 1 — why does ALS-based post-training diverge on deep models, and can it be fixed?** The answer is: ALS weight modification interacting with residual amplification is the cause, established by controlled evidence; and the three natural repairs cannot fix it, each proven redundant against a matched SGD baseline. The honest conclusion is a *negative resolution*: this design space is closed, and future work should not re-enter it.
+
+**Question 2 — what actually works, compared fairly, on the same deep model?** The 2×2 framework gives the clean, quantified answer, on Qwen2.5-7B at 800 steps, three seeds:
 
 - **AdamW, full-rank: 1.25 perplexity.** Best absolute quality.
 - **AdamW + LoRA: 10.41**, at roughly 0.1% of trainable parameters — the lowest trainable-parameter cost. (A memory advantage; FLOPs through frozen weights are similar.)
@@ -102,9 +106,9 @@ But a negative result is only valuable if you point to what *does* work — and 
 
 For context, the pretrained Qwen2.5-7B baseline is **73.1 PPL** — so every verified solution is a large, real improvement over doing nothing: **AdamW 58×, plain SGD 10.7×, LoRA 7×.**
 
-The takeaway is deliberately blunt: **on deep models, remove the ALS machinery and let gradient descent do its job with a sustained learning rate.** Best quality still requires AdamW.
+So the research arc is complete: **a research question (why does ALS diverge), observed through the 2×2 experiments, several solutions attempted (three repairs, all rigorously falsified), and a definitive conclusion** — on deep models, remove the ALS machinery and let gradient descent do its job with a sustained learning rate; best quality still requires AdamW.
 
-**[13:00-14:00] 7. CLOSING — value statement (SLIDE: footer)**
+**[13:15-14:00] 7. CLOSING — value statement (SLIDE: footer)**
 
 Let me close on what this project's lasting value is, because it is easy to misread a negative result as a failure.
 
@@ -124,9 +128,9 @@ Thank you. My poster walks through each of these results with the experiment cha
 - 3:00  The 2×2 framework — its logic (two factors, FLOPs normalization)
 - 5:00  Focus: why ASP fails — controlled ablation + causal theory
 - 8:30  Focus: can it be fixed — three repairs fail
-- 11:30 Conclusion from the framework — verified solutions, quantified
-- 13:00 Closing / value statement
-- 13:45 → Q&A
+- 11:30 Resolving the research question — what works, quantified
+- 13:15 Closing / value statement
+- 14:00 → Q&A
 
 ## ONE-SENTENCE SUMMARY (if asked)
 "On deep LLMs, ALS weight modification causes divergence via residual amplification; three natural repairs are provably ineffective against matched SGD baselines; and the verified alternatives — AdamW, LoRA, plain SGD — deliver up to 58× improvement over the pretrained baseline, all established within a fair 2×2 factorial framework."
@@ -144,7 +148,7 @@ Thank you. My poster walks through each of these results with the experiment cha
 
 ### Criterion 3: Presentation and delivery (clarity and quality)
 6. "Summarize the project in one sentence." — See ONE-SENTENCE SUMMARY above.
-7. "How is the story structured?" — Verdict strip up top (red/green), 2×2 framework logic up front, then focus on the one problem (ASP column): ablation → theory → three failed repairs → verified solutions with baselines and quantified gains.
+7. "How is the story structured?" — Research background → research question → the 2×2 framework's logic → focus on the one problem (ASP column): ablation → causal theory → three failed repairs → resolve the research question with verified solutions, baselines, and quantified gains.
 
 ### Criterion 4: Q&A (knowledge of subjects)
 8. "Is correlation 0.99981 meaningful?" — It's on the full 96-cycle trajectory, mean per-cycle difference 0.116 PPL. Honest caveat: Pearson correlation on trending series is inflated — we also report the per-cycle mean difference and matched final PPL; the curves are indistinguishable under those metrics too.
