@@ -43,26 +43,32 @@ So the research question is twofold, and it defines everything that follows:
 
 To answer both questions rigorously, we built a systematic comparison framework — and I want to explain its logic, because it shapes every experiment that follows.
 
-**[3:00-5:00] 3. THE 2×2 FRAMEWORK — its logic (SLIDE: Methods + Finding 4)**
+**[3:00-5:30] 3. THE 2×2 FRAMEWORK — its logic (SLIDE: Methods + Finding 4)**
 
-The framework is a **2×2 factorial design**. Two factors, each with two levels.
+To answer both questions rigorously, we built a systematic comparison framework — and I want to explain it slowly, because it shapes every experiment that follows.
 
-The first factor is the **optimizer**: our ASP method versus AdamW, the gradient-based standard. The second factor is the **parameter form**: full-rank fine-tuning versus low-rank LoRA adapters. Crossing them gives four protocols:
+The framework is a **2×2 factorial design**. Two design choices define how any model is fine-tuned, and each choice has two options.
 
-|  | Full-rank | LoRA |
+**Choice 1 — which optimizer drives the update?** The optimizer is the "steering algorithm" that decides how to adjust weights based on the loss. We compare two: **AdamW**, the standard gradient-based optimizer used across the industry, versus **ASP**, our alternating-optimization method — which alternates an ALS closed-form solve, SGD, and a perturbation phase.
+
+**Choice 2 — how many parameters do we train?** Either **full-rank** — every weight in the model is updated — or **LoRA** — we freeze the original model and train only a tiny low-rank adapter ΔW = BA with rank r far smaller than the dimension d. LoRA has orders of magnitude fewer trainable parameters.
+
+Crossing these two choices gives four post-training algorithms — let me describe each one in plain terms:
+
+|  | Full-rank (train ALL params) | LoRA (train a small adapter) |
 |---|---|---|
-| **AdamW** | B | D |
-| **ASP** | A | C |
+| **AdamW** (standard gradient optimizer) | **B** — gradient descent updates every weight of the whole model. This is the industry standard for fine-tuning. | **D** — same optimizer, but only the tiny adapter is trained; the original model is frozen. Far fewer parameters to update. |
+| **ASP** (alternating: ALS + SGD + perturbation) | **A** — each cycle, ALS *replaces* the output-layer weights with a closed-form least-squares solution, then SGD and noise follow. This is the cell that **diverges on deep models.** | **C** — the same alternating schedule, but applied to the low-rank adapter. It converges, but quality is an order of magnitude worse than AdamW. |
 
-Four cells, each answering a different question: Does the optimizer matter? Does the parameter form matter? And critically — **do they interact?**
+**Why is each cell a different algorithm?** Because the optimizer and the parameter form interact. Training B (full AdamW) and D (LoRA AdamW) share the same steering algorithm but update different sets of weights. Training A and C share the same ALS machinery but apply it to different targets. So the grid answers three questions at once: Does the optimizer matter? Does the parameter form matter? And critically — **do they interact?**
 
-The framework has one design principle that I want to emphasize: **FLOPs normalization.** One ALS solve costs orders of magnitude more than one AdamW step. Comparing by step count would be meaningless — so every protocol runs until it consumes the *same total floating-point operations*, with shared data, shared seeds, and identical evaluation. Everything else is held fixed. This is what makes the comparison fair rather than anecdotal.
+One design principle makes the comparison fair: **FLOPs normalization.** One ALS solve costs orders of magnitude more compute than one AdamW step — comparing by step count would be meaningless. So every protocol runs until it consumes the *same total floating-point operations*, with shared data, shared seeds, and identical evaluation. Everything else is held fixed.
 
 Now — here is the key thing about the 2×2 grid. Look at the ASP column. **Both ASP cells fail, in two different ways.** Under full-rank, protocol A diverges. Under LoRA, protocol C converges but is an order of magnitude worse than AdamW on the same parameter form. The AdamW column is stable at every depth.
 
 So the 2×2 framework localizes the problem precisely: **the failure lives in the ASP optimizer, not in the model and not in the parameter form.** That is the one problem I want to focus on for the rest of the talk.
 
-**[5:00-8:30] 4. FOCUS: WHY DOES ASP FAIL? — controlled ablation (SLIDE: Finding 5 + ablation chart)**
+**[6:00-9:00] 4. FOCUS: WHY DOES ASP FAIL? — controlled ablation (SLIDE: Finding 5 + ablation chart)**
 
 ASP has three components: ALS, SGD, and perturbation. Which one causes the divergence? Prior work blamed vague things — "numerical instability," "optimizer mismatch," "the noise." I wanted evidence, so I ran a **five-condition controlled ablation** on Qwen2.5-7B, holding data, seeds, and budget fixed, and turning components on and off one at a time.
 
@@ -78,7 +84,7 @@ The verdict is unambiguous: **ALS weight modification — not the noise, not the
 
 And there is a causal explanation, not just a correlation. The key is the **residual connection** — the architectural feature that makes deep transformers trainable at all. Each layer computes h_{l+1} = h_l + f_l(h_l). When ALS modifies the output layer, the perturbation propagates backward through every residual connection, and each layer multiplies it by roughly 1.08 — the identity path preserves it, and the nonlinearity adds about eight percent. Over 27 layers that is an **eightfold amplification**, while SGD's per-cycle recovery is only about 0.005 — a sixteen-hundred-to-one asymmetry. The model cannot heal faster than the perturbation grows. The theory predicts the boundary **between 25 and 28 layers**, consistent with the observed 24-converges / 28-diverges split. (Honest caveat: 25–27 layers were not directly tested — this is a calibrated prediction.)
 
-**[8:30-11:30] 5. FOCUS: CAN IT BE FIXED? — three repairs, all fail (SLIDE: Findings 1-3)**
+**[9:00-11:45] 5. FOCUS: CAN IT BE FIXED? — three repairs, all fail (SLIDE: Findings 1-3)**
 
 Now the natural response to any diagnosis is to fix it. I designed three repairs — and rigorously establishing that they fail is one of the most valuable results of this project. Let me be honest about each.
 
@@ -92,7 +98,7 @@ We fixed the timing and ran the decisive control: **matched-budget pure SGD vers
 
 So the design space of "salvaging ALS" is closed. In every case, a matched SGD control matches or beats the ALS mechanism.
 
-**[11:30-13:15] 6. RESOLVING THE RESEARCH QUESTION — what works (SLIDE: Finding 4 + Verified Solutions)**
+**[11:45-13:30] 6. RESOLVING THE RESEARCH QUESTION — what works (SLIDE: Finding 4 + Verified Solutions)**
 
 Let me now close the loop and answer the two research questions I posed at the start — because that is what "solving" means for this project: not salvaging a broken method, but answering the questions definitively.
 
@@ -108,7 +114,7 @@ For context, the pretrained Qwen2.5-7B baseline is **73.1 PPL** — so every ver
 
 So the research arc is complete: **a research question (why does ALS diverge), observed through the 2×2 experiments, several solutions attempted (three repairs, all rigorously falsified), and a definitive conclusion** — on deep models, remove the ALS machinery and let gradient descent do its job with a sustained learning rate; best quality still requires AdamW.
 
-**[13:15-14:00] 7. CLOSING — value statement (SLIDE: footer)**
+**[13:30-14:15] 7. CLOSING — value statement (SLIDE: footer)**
 
 Let me close on what this project's lasting value is, because it is easy to misread a negative result as a failure.
 
@@ -125,12 +131,12 @@ Thank you. My poster walks through each of these results with the experiment cha
 ## TIMING REFERENCE
 - 0:00  Research background (why post-training is expensive; ALS promise)
 - 1:30  Research question (shallow converges / deep diverges; 11/11 failures)
-- 3:00  The 2×2 framework — its logic (two factors, FLOPs normalization)
-- 5:00  Focus: why ASP fails — controlled ablation + causal theory
-- 8:30  Focus: can it be fixed — three repairs fail
-- 11:30 Resolving the research question — what works, quantified
-- 13:15 Closing / value statement
-- 14:00 → Q&A
+- 3:00  The 2×2 framework — its logic + the four algorithms explained
+- 6:00  Focus: why ASP fails — controlled ablation + causal theory
+- 9:00  Focus: can it be fixed — three repairs fail
+- 11:45 Resolving the research question — what works, quantified
+- 13:30 Closing / value statement
+- 14:15 → Q&A
 
 ## ONE-SENTENCE SUMMARY (if asked)
 "On deep LLMs, ALS weight modification causes divergence via residual amplification; three natural repairs are provably ineffective against matched SGD baselines; and the verified alternatives — AdamW, LoRA, plain SGD — deliver up to 58× improvement over the pretrained baseline, all established within a fair 2×2 factorial framework."
