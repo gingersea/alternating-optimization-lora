@@ -3,38 +3,70 @@
 # jianghuanyun — Supervisor: Prof. Hoi To Wai
 # CUHK Department of Computer Science and Engineering
 #
-# Speaker notes: target ~140 words/min. Bold = emphasis. [SLIDE] markers map to poster sections.
-# Total ≈ 1560 words ≈ 11 minutes at 140 wpm. Cut suggestions marked (CUT) for the 10-min version.
+# Narrative (per author's request): Background -> Research Question -> Logic of the
+# 2x2 framework -> Focus on ONE problem (ASP column fails) -> Experiments -> Conclusions.
+# Speaker notes: target ~140 words/min. Bold = emphasis. [SLIDE] maps to poster sections.
+# Total ≈ 1750 words ≈ 12.5 min at 140 wpm. Cut suggestions marked (CUT) for 10-min.
 #
 # JUDGING-CRITERIA MAP (Faculty panel):
-#   C1 Problem solving/contribution  -> "Contributions" poster block + Section 2-5 of the speech
+#   C1 Problem solving/contribution  -> "Contributions" poster block + Sec 2-5
 #   C2 Results and significance      -> quantified headline (58x/10.7x/7x) + Finding 1-5
-#   C3 Presentation/delivery         -> verdict strip + 4-step story arc + one-sentence summary
+#   C3 Presentation/delivery         -> verdict strip + story arc + one-sentence summary
 #   C4 Q&A knowledge                 -> 12 prepared answers below, organized by criterion
 
 ---
 
-**[0:00-0:30] OPENING — the puzzle (SLIDE: header + Background)**
+**[0:00-1:30] 1. RESEARCH BACKGROUND — why this problem matters (SLIDE: header)**
 
-Good morning. Thank you for coming to my poster. My project is about *alternating optimization* for large-language-model post-training — and the puzzle that drives the whole project is this: **an optimization method that works beautifully on shallow models catastrophically diverges the moment you apply it to a deep model.** Over the course of this project I not only explained *why* it diverges — I also discovered that the most natural fixes for it don't work, and I verified what *does* work instead. Let me show you.
+Good morning. Thank you for coming to my poster. Let me start with the context that motivates this project.
 
-**[0:30-2:30] BACKGROUND — what ALS promises (SLIDE: Background & Problem)**
+Fine-tuning large language models is the backbone of modern AI deployment — from instruction tuning to domain adaptation. But it is extremely expensive: fine-tuning a 7-billion-parameter model can take hundreds of GPU-hours, because the standard approach — AdamW on every parameter — needs thousands of gradient steps.
 
-First, the method. **Alternating Least Squares — ALS — is the classic workhorse of collaborative filtering.** Instead of taking thousands of gradient steps, ALS solves a *closed-form* least-squares problem on a layer's weights:
+This cost motivates a fundamentally different idea: **Alternating Least Squares, or ALS.** ALS comes from the collaborative-filtering era — it made the Netflix Prize solvable. Instead of descending a loss by gradients, ALS solves a *closed-form* least-squares problem on a layer's weights:
 
 W* = (XᵀX + λI)⁻¹XᵀY
 
-One matrix solve replaces hundreds of gradient steps. For the Netflix Prize era, that was a revolution. The idea for this project: **apply that same closed-form solve to the output layer of a large language model during post-training.** The method — which we call the ASP protocol — alternates an ALS solve on the language-model head, a phase of SGD on the whole model, and a small perturbation phase.
+One matrix solve replaces hundreds of gradient steps. So the idea of this project was to **apply ALS to the output layer of a large language model during post-training** — hoping to get the same closed-form acceleration for LLM customization.
 
-Here is the puzzle. On shallow models — 12-layer OPT, 24-layer Qwen-0.5B — **ALS converges.** But on a 28-layer model, Qwen2.5-7B, it diverges. Not slowly — **catastrophically, to NaN, within one to three cycles. Every single attempt.** We tried eleven independent configurations — damping, layer-skipping, norm-clipping — all the reactive patches in the literature. **All eleven diverged.**
+The protocol we built — which we call **ASP** — alternates three phases per cycle: an ALS solve on the language-model head, an SGD phase on the whole model, and a small perturbation phase.
 
-So the question became: *why?* And that's where the real work of this project began.
+**[1:30-3:00] 2. THE RESEARCH QUESTION (SLIDE: Background & Problem)**
 
-**[2:30-5:30] DIAGNOSIS — controlled ablation (SLIDE: Finding 5 + ablation chart)**
+But when we ran it, we hit a sharp puzzle. **On shallow models, ALS works.** Twelve-layer OPT and twenty-four-layer Qwen-0.5B both converge. **On a deep model — Qwen2.5-7B, twenty-eight layers — it diverges catastrophically**, to NaN, within one to three cycles.
 
-The first contribution is a **controlled ablation** that isolates the cause. A lot of prior work blamed vague things: "numerical instability," "optimizer mismatch," "the perturbation noise." I wanted to test each candidate *independently*. So I ran a five-condition experiment on Qwen2.5-7B, holding data, seeds, and budget fixed, and turning components on and off.
+We tried every reactive patch in the literature: damping, layer-skipping, norm-clipping. **Eleven independent configurations. All eleven diverged.**
 
-The result is unambiguous. (Point at chart.)
+So the research question is twofold, and it defines everything that follows:
+
+1. **Why does ALS-based post-training diverge on deep models — and can it be fixed?**
+2. **What actually works for post-training, compared fairly, on the same deep model?**
+
+To answer both questions rigorously, we built a systematic comparison framework — and I want to explain its logic, because it shapes every experiment that follows.
+
+**[3:00-5:00] 3. THE 2×2 FRAMEWORK — its logic (SLIDE: Methods + Finding 4)**
+
+The framework is a **2×2 factorial design**. Two factors, each with two levels.
+
+The first factor is the **optimizer**: our ASP method versus AdamW, the gradient-based standard. The second factor is the **parameter form**: full-rank fine-tuning versus low-rank LoRA adapters. Crossing them gives four protocols:
+
+|  | Full-rank | LoRA |
+|---|---|---|
+| **AdamW** | B | D |
+| **ASP** | A | C |
+
+Four cells, each answering a different question: Does the optimizer matter? Does the parameter form matter? And critically — **do they interact?**
+
+The framework has one design principle that I want to emphasize: **FLOPs normalization.** One ALS solve costs orders of magnitude more than one AdamW step. Comparing by step count would be meaningless — so every protocol runs until it consumes the *same total floating-point operations*, with shared data, shared seeds, and identical evaluation. Everything else is held fixed. This is what makes the comparison fair rather than anecdotal.
+
+Now — here is the key thing about the 2×2 grid. Look at the ASP column. **Both ASP cells fail, in two different ways.** Under full-rank, protocol A diverges. Under LoRA, protocol C converges but is an order of magnitude worse than AdamW on the same parameter form. The AdamW column is stable at every depth.
+
+So the 2×2 framework localizes the problem precisely: **the failure lives in the ASP optimizer, not in the model and not in the parameter form.** That is the one problem I want to focus on for the rest of the talk.
+
+**[5:00-8:30] 4. FOCUS: WHY DOES ASP FAIL? — controlled ablation (SLIDE: Finding 5 + ablation chart)**
+
+ASP has three components: ALS, SGD, and perturbation. Which one causes the divergence? Prior work blamed vague things — "numerical instability," "optimizer mismatch," "the noise." I wanted evidence, so I ran a **five-condition controlled ablation** on Qwen2.5-7B, holding data, seeds, and budget fixed, and turning components on and off one at a time.
+
+(Point at the ablation chart.)
 
 - **SGD alone: converges**, 53.6 perplexity.
 - **Perturbation noise alone: converges.**
@@ -42,95 +74,88 @@ The result is unambiguous. (Point at chart.)
 - **But ALS with a real weight modification: diverges in a single solve.** Perplexity jumps from 73 to 2 *billion* in one step.
 - And ALS-plus-SGD, the full protocol: also diverges.
 
-So the verdict: **ALS weight modification — not noise, not the optimizer, not hook overhead — is the necessary-and-sufficient cause of divergence within the tested space.** That was the first time this failure was established by controlled evidence rather than assumed.
+The verdict is unambiguous: **ALS weight modification — not the noise, not the optimizer, not hook overhead — is the necessary-and-sufficient cause of divergence within the tested space.** That was the first time this failure was established by controlled evidence rather than assumed.
 
-**[5:30-7:30] WHY — the causal theory (SLIDE: Methods)**
+And there is a causal explanation, not just a correlation. The key is the **residual connection** — the architectural feature that makes deep transformers trainable at all. Each layer computes h_{l+1} = h_l + f_l(h_l). When ALS modifies the output layer, the perturbation propagates backward through every residual connection, and each layer multiplies it by roughly 1.08 — the identity path preserves it, and the nonlinearity adds about eight percent. Over 27 layers that is an **eightfold amplification**, while SGD's per-cycle recovery is only about 0.005 — a sixteen-hundred-to-one asymmetry. The model cannot heal faster than the perturbation grows. The theory predicts the boundary **between 25 and 28 layers**, consistent with the observed 24-converges / 28-diverges split. (Honest caveat: 25–27 layers were not directly tested — this is a calibrated prediction.)
 
-But a proof of *what* isn't an explanation of *why*. The second contribution is a causal theory. The key is the **residual connection** — the architectural feature that makes deep transformers trainable at all.
+**[8:30-11:30] 5. FOCUS: CAN IT BE FIXED? — three repairs, all fail (SLIDE: Findings 1-3)**
 
-Each layer computes h_{l+1} = h_l + f_l(h_l). When ALS modifies the output layer, that perturbation δ propagates backward through every residual connection. Linearizing each layer, the perturbation is multiplied by roughly (I + J_l), where J_l is the layer Jacobian. And here's the structural fact: **for trained transformers, the per-layer amplification factor ‖I + J_l‖ is about 1.08.** The identity path preserves the perturbation exactly, and each layer's nonlinearity adds about eight percent more.
+Now the natural response to any diagnosis is to fix it. I designed three repairs — and rigorously establishing that they fail is one of the most valuable results of this project. Let me be honest about each.
 
-After L layers, that's 1.08^(L-1). At 28 layers — 1.08²⁷ — that's an **eightfold amplification**. Meanwhile, SGD's recovery capacity per cycle is tiny — on the order of 0.005. That's a sixteen-hundred-to-one asymmetry: **the model cannot heal faster than the perturbation grows.**
+**(1) Gradient injection — A-SYNC.** If the hard weight jump is the problem, why not inject the ALS solution as a *gradient bias* instead? Compute the ALS delta, revert the weights, and add it to the gradient. We called this A-SYNC. And here is the first lesson — a *methodological* one: **when we audited the implementation, we found the injection was a timing no-op.** It was added to the gradient buffer *after* the optimizer step and wiped by the next zero-grad. It never touched a single parameter — the convergence we had attributed to A-SYNC was just plain SGD.
 
-This theory predicts a critical depth. Solving for where amplification overwhelms recovery places the boundary **between 25 and 28 layers — consistent with the observed 24-converges / 28-diverges split.** (To be honest: 25–27 layers were not directly tested; this is a calibrated prediction.) And it explains a second observation: the perturbation magnitude *grows* across cycles, roughly doubling — because SGD's partial recovery shifts the hidden-state distribution, so the next ALS solve finds a larger discrepancy. It's a positive feedback loop. That's why damping patches only delay the failure — they never stop it.
+We fixed the timing and ran the decisive control: **matched-budget pure SGD versus A-SYNC on Qwen2.5-7B — identical steps, identical learning rate, identical evaluation points.** The trajectories are indistinguishable: final perplexity 6.82 versus 6.83, trajectory correlation 0.99981. The injection contributes nothing.
 
-**[7:30-10:30] THE ATTEMPTED REPAIRS — all three fail (SLIDE: Findings 1-3)**
+**(2) The re-interpretation.** With the injection proven vacuous, our earlier twelve-variant "algorithm ranking" had to be explained by something else — and the suspect was the learning-rate schedule, which differed across variants. We tested it with pure SGD, no ALS machinery: fixed learning rate 50.7 PPL, cosine decay 54.7, exponential decay 57.1 — the same ranking as the 7B variants. **The perceived algorithm ranking was a learning-rate-schedule effect, not an injection-strength effect.**
 
-Now, the natural response to any diagnosis is to fix it. I designed three repairs. **All three failed — and that failure, rigorously established, is one of the most valuable results of this project.** Let me be honest about each.
+**(3) Low-rank probe and soft-target ALS.** Two more repairs, both negative. Confining ALS to a low-rank probe head eliminates divergence — confirming the amplification mechanism — but caps quality: 22.8 PPL versus 6.83 for plain SGD on the 7B model. Widening the bottleneck, r = 64 to 1024, changes nothing; all within noise of pure SGD. Why? Because a closed-form solve of the cross-entropy objective recovers *the same descent direction* as the gradient itself — the ALS solve is structurally redundant with SGD. And the one objective where a closed-form solve might not be redundant — soft-target distillation, matching a teacher's logit distribution — also buys nothing: 52.6 versus 52.4, within noise.
 
-**(1) Gradient injection — A-SYNC.** If the problem is the hard weight jump, why not inject the ALS solution as a *gradient bias* instead? Compute the ALS delta, revert the weights, and add the delta to the gradient. This is what we called A-SYNC. And here's the first lesson — a *methodological* one: **when we audited the implementation, we found the injection was a timing no-op.** It was added to the gradient buffer *after* the optimizer step, and wiped by the next zero-grad. It never touched a single parameter. The convergence we'd been attributing to A-SYNC was just… plain SGD.
+So the design space of "salvaging ALS" is closed. In every case, a matched SGD control matches or beats the ALS mechanism.
 
-We fixed the timing and ran the decisive control: **matched-budget pure SGD vs. A-SYNC on Qwen2.5-7B, identical steps, identical learning rate, identical evaluation points.** The trajectories are indistinguishable — final perplexity 6.82 versus 6.83, with a trajectory correlation of 0.99981. The injection contributes nothing. (CUT for 10-min: "The lesson is worth stating plainly: before you attribute an effect to a hybrid component, verify that the component actually modifies what it claims, at the time it claims to.")
+**[11:30-13:00] 6. CONCLUSION FROM THE FRAMEWORK — what works (SLIDE: Finding 4 + Verified Solutions)**
 
-**(2) The re-interpretation.** With the injection proven vacuous, our earlier twelve-variant "algorithm ranking" had to be explained by something else — and the suspect was the learning rate schedule, which differed across variants. We tested this with pure SGD, no ALS machinery at all: fixed learning rate 50.7 PPL, cosine decay 54.7, exponential decay 57.1 — the same ranking as the seven-billion-parameter variants. **The perceived algorithm ranking was a learning-rate-schedule effect, not an injection-strength effect.**
-
-**(3) The low-rank probe and soft-target ALS.** Two more repairs, both negative. First, confine ALS to a low-rank probe head parallel to the language-model head. This does eliminate divergence — confirming the amplification mechanism — but it caps quality: 22.8 PPL on the 7B model versus 6.83 for plain SGD. And widening the bottleneck, r = 64 to 1024, changes nothing — all within noise of pure SGD. Why? Because a closed-form solve of the cross-entropy objective recovers *the same descent direction* as the gradient itself — the ALS solve is structurally redundant with SGD.
-
-Second, the one objective where a closed-form solve might *not* be redundant: soft-target distillation, matching a teacher's logit distribution. We built it — A-KD — and compared the closed-form solver against SGD on the same objective. **52.6 versus 52.4. Indistinguishable.** The exact solve buys nothing.
-
-So the design space of "salvaging ALS" is closed: gradient injection, no-op; low-rank probing, no quality gain; soft-target distillation, no incremental value. In every case, a matched SGD control matches or beats the ALS mechanism.
-
-**[10:30-12:30] THE VERIFIED SOLUTIONS (SLIDE: Finding 4 + Verified Solutions)**
-
-But a negative result is only valuable if you point to what *does* work. Within our 2×2 factorial framework — optimizer crossed with parameter form — the answers are clean, on Qwen2.5-7B at 800 steps, three seeds:
+But a negative result is only valuable if you point to what *does* work — and the 2×2 framework gives us the clean answer, on Qwen2.5-7B at 800 steps, three seeds:
 
 - **AdamW, full-rank: 1.25 perplexity.** Best absolute quality.
-- **AdamW + LoRA: 10.41**, at roughly 0.1% of trainable parameters. Lowest trainable-parameter cost (memory advantage; FLOPs through frozen weights are similar).
-- And the surprising one: **plain SGD with a sustained learning rate — 6.83 perplexity in 4800 steps**, with a power-law tail converging toward about 3.5. No ALS, no perturbation, no injection. Just gradient descent, with a learning rate that *doesn't decay to zero*.
+- **AdamW + LoRA: 10.41**, at roughly 0.1% of trainable parameters — the lowest trainable-parameter cost. (A memory advantage; FLOPs through frozen weights are similar.)
+- And the surprising one: **plain SGD with a sustained learning rate — 6.83 perplexity in 4800 steps**, with a power-law tail toward about 3.5. No ALS, no perturbation, no injection — just gradient descent, with a learning rate that *doesn't decay to zero*.
 
-For context, the pretrained Qwen2.5-7B baseline on this benchmark is 73.1 PPL — so every verified solution is a large, real improvement over doing nothing.
+For context, the pretrained Qwen2.5-7B baseline is **73.1 PPL** — so every verified solution is a large, real improvement over doing nothing: **AdamW 58×, plain SGD 10.7×, LoRA 7×.**
 
-The practical takeaway is deliberately blunt: **on deep models, remove the ALS machinery and let gradient descent do its job with a sustained learning rate.**
+The takeaway is deliberately blunt: **on deep models, remove the ALS machinery and let gradient descent do its job with a sustained learning rate.** Best quality still requires AdamW.
 
-**[12:30-13:30] CONCLUSION + value statement (SLIDE: footer)**
+**[13:00-14:00] 7. CLOSING — value statement (SLIDE: footer)**
 
-Let me close on what this project's lasting value is, because I think it's easy to misread a negative result as a failure. Three things.
+Let me close on what this project's lasting value is, because it is easy to misread a negative result as a failure.
 
-**First, a rigorous, controlled answer to a long-standing failure mode.** The ALS-divergence story had been explained away with hand-waving; we established the specific mechanism by controlled evidence and made it falsifiable.
+**First, a rigorous, controlled answer to a long-standing failure mode** — the ALS-divergence story had been explained away with hand-waving; we established the specific mechanism by controlled evidence and made it falsifiable.
 
-**Second, a causal theory with predictive power** — the residual-amplification framework predicts the depth boundary across architectures, not just in hindsight.
+**Second, a causal theory with predictive power** — the residual-amplification framework predicts the depth boundary, not just explains it in hindsight.
 
-**Third, and most important for the community: a negative result that saves other researchers from a plausible but ineffective design.** We showed — with matched-budget controls, at two scales — that gradient repair of ALS doesn't work, and we identified *why*: the closed-form solve is redundant with the gradient. That's not a null result in the pejorative sense; it's a *saved* research direction. And along the way we built a reproducibility discipline — including the evaluation-harness audit that corrected our own earlier numbers — that's worth more than the individual findings.
-
-**[13:30-14:00] CLOSING**
+**Third, and most important: a negative result that saves other researchers from a plausible but ineffective design.** We showed — with matched-budget controls, at two scales — that gradient repair of ALS doesn't work, and *why*: the closed-form solve is redundant with the gradient. That is a saved research direction, not a dead end. And along the way we built a reproducibility discipline — including the evaluation-harness audit that corrected our own earlier numbers — that transfers beyond this project.
 
 Thank you. My poster walks through each of these results with the experiment charts. I'm happy to take questions — especially challenges; the negative results are the part I'd defend hardest. Thank you.
 
 ---
 
 ## TIMING REFERENCE
-- 0:00 Opening
-- 0:30 Background
-- 2:30 Diagnosis / ablation
-- 5:30 Causal theory
-- 7:30 Repairs (A-SYNC / lr / probe / A-KD)
-- 10:30 Verified solutions
-- 12:30 Conclusion
-- 13:30 Close → Q&A
+- 0:00  Research background (why post-training is expensive; ALS promise)
+- 1:30  Research question (shallow converges / deep diverges; 11/11 failures)
+- 3:00  The 2×2 framework — its logic (two factors, FLOPs normalization)
+- 5:00  Focus: why ASP fails — controlled ablation + causal theory
+- 8:30  Focus: can it be fixed — three repairs fail
+- 11:30 Conclusion from the framework — verified solutions, quantified
+- 13:00 Closing / value statement
+- 13:45 → Q&A
+
+## ONE-SENTENCE SUMMARY (if asked)
+"On deep LLMs, ALS weight modification causes divergence via residual amplification; three natural repairs are provably ineffective against matched SGD baselines; and the verified alternatives — AdamW, LoRA, plain SGD — deliver up to 58× improvement over the pretrained baseline, all established within a fair 2×2 factorial framework."
 
 ## ANTICIPATED Q&A — organized by judging criteria
 
 ### Criterion 1: Problem solving (contribution)
-1. "So you're saying your own method doesn't work?" — The ALS family doesn't work *on deep models*, and we established the specific mechanism by controlled evidence, plus why the repairs can't fix it. The project's contribution is fourfold: a diagnosis (first controlled evidence isolating ALS weight modification), a causal theory with a falsifiable boundary, a saved design space (three plausible repairs proven ineffective — future researchers won't repeat them), and verified alternatives with a corrected evaluation harness.
-2. "What exactly did you contribute, beyond a negative result?" — Three things that outlive the negative result: (1) the ablation method that isolates *which* component of a hybrid optimizer causes failure; (2) a falsifiable amplification theory that predicts a depth boundary consistent with 8 architectures; (3) the harness audit — we found and corrected our own tokenizer/label bugs, a discipline contribution that transfers to any evaluation setup.
+1. "So you're saying your own method doesn't work?" — The ALS family doesn't work *on deep models*, and we established the specific mechanism by controlled evidence, plus why the repairs can't fix it. The contribution is fourfold: a diagnosis (first controlled evidence isolating ALS weight modification), a causal theory with a falsifiable boundary, a saved design space (three plausible repairs proven ineffective), and verified alternatives with a corrected evaluation harness.
+2. "Why the 2×2 framework — couldn't you just compare optimizers directly?" — Because optimizer and parameter form interact. Protocol A diverges but protocol C only underperforms — a one-dimensional comparison would misattribute the failure. The factorial design separates the optimizer effect, the parameter-form effect, and their interaction, with FLOPs normalization making steps comparable.
 
 ### Criterion 2: Results and significance (achievement)
-3. "What's the headline number?" — Relative to the pretrained 73.1 PPL baseline: AdamW full-rank achieves 1.25 PPL (a 58× improvement), plain SGD 6.83 (10.7×), AdamW+LoRA 10.41 (7×) — all large, real improvements over doing nothing. The decisive control: A-SYNC injection 6.82 vs pure SGD 6.83, trajectory correlation 0.99981.
-4. "Why is AdamW 1.25 but plain SGD 6.83?" — Different budgets: AdamW at 800 steps is heavily trained on a small set (overfitting risk noted — in-distribution val only); SGD at 4800 steps is the fair matched control to A-SYNC. Both are valid operating points; LoRA splits the difference on parameter cost.
-5. "What's the significance of the negative results?" — They close three plausible research directions with matched-budget evidence, and identify *why* each fails (the closed-form solve is redundant with the CE gradient direction). That's a saved direction, not a dead end — the significance is preventing others from spending a year on it.
+3. "What's the headline number?" — Relative to the 73.1 PPL pretrained baseline: AdamW 1.25 (58×), plain SGD 6.83 (10.7×), LoRA 10.41 (7×). Decisive control: A-SYNC 6.82 vs pure SGD 6.83, correlation 0.99981.
+4. "Why is AdamW 1.25 but plain SGD 6.83?" — Different budgets: AdamW at 800 steps is heavily trained on a small set (overfitting risk — in-distribution val only); SGD at 4800 steps is the fair matched control to A-SYNC. Both are valid operating points; LoRA splits the difference on parameter cost.
+5. "What's the significance of the negative results?" — They close three plausible research directions with matched-budget evidence and identify *why* each fails (the closed-form solve is redundant with the CE gradient direction). A saved direction, not a dead end.
 
 ### Criterion 3: Presentation and delivery (clarity and quality)
-6. "Can you summarize the whole project in one sentence?" — "On deep LLMs, ALS weight modification causes divergence via residual amplification; all three natural repairs are provably ineffective against matched SGD baselines; and verified alternatives — AdamW, LoRA, plain SGD — deliver up to 58× improvement over the pretrained baseline, with a corrected evaluation harness."
-7. "How is the story structured on your poster?" — A verdict strip up top (red/green: ALS family diverges, SGD/AdamW/LoRA converge), a 4-step story arc on the left (diverges → mechanism → repairs fail → baselines verified), five evidence charts on the right — all with pretrained baseline reference lines — and verified solutions with quantified gains in the footer.
+6. "Summarize the project in one sentence." — See ONE-SENTENCE SUMMARY above.
+7. "How is the story structured?" — Verdict strip up top (red/green), 2×2 framework logic up front, then focus on the one problem (ASP column): ablation → theory → three failed repairs → verified solutions with baselines and quantified gains.
 
 ### Criterion 4: Q&A (knowledge of subjects)
-8. "Is correlation 0.99981 meaningful?" — It's on the full 96-cycle trajectory, mean per-cycle difference 0.116 PPL. Honest caveat: Pearson correlation on trending series is inflated — we additionally report the per-cycle mean difference and matched final PPL; the two curves are visually and statistically indistinguishable under those metrics too.
-9. "Boundary 25–28 layers from only a few model depths?" — Honest answer: it's a two-point boundary (≤24 / ≥28), consistent across 8 architectures; the *trend* is predicted, the exact constant is calibrated and 25–27 layers were not directly tested. The poster says "consistent with observation."
-10. "Why WikiText-2 only?" — Acknowledged limitation; cross-domain (C4, HellaSwag) is listed as future work in the report. PPL is a proxy for in-distribution fit, not generalization.
-11. "A-KD 52.6 vs 52.4 — isn't that just noise?" — Exactly the point: the closed-form solver's advantage is *within noise*, i.e., nonexistent at this scale. That's the negative result — we report it honestly with the noise caveat, which is what distinguishes it from a cherry-picked claim.
-12. "How was the FLOPs budget matched across protocols?" — All protocols consume equal total FLOPs (forward+backward+optimizer+ALS amortized); LoRA's advantage is trainable-parameter/memory cost, not FLOPs — we corrected the poster to say "lowest trainable-parameter cost" rather than "compute efficiency."
+8. "Is correlation 0.99981 meaningful?" — It's on the full 96-cycle trajectory, mean per-cycle difference 0.116 PPL. Honest caveat: Pearson correlation on trending series is inflated — we also report the per-cycle mean difference and matched final PPL; the curves are indistinguishable under those metrics too.
+9. "Boundary 25–28 layers from only a few model depths?" — It's a two-point boundary (≤24 / ≥28), consistent across 8 architectures; the *trend* is predicted, the constant calibrated, and 25–27 layers were not directly tested. The poster says "consistent with observation."
+10. "Why WikiText-2 only?" — Acknowledged limitation; cross-domain (C4, HellaSwag) is future work. PPL is a proxy for in-distribution fit, not generalization.
+11. "A-KD 52.6 vs 52.4 — isn't that just noise?" — Exactly the point: the closed-form solver's advantage is *within noise* — nonexistent at this scale. We report it honestly with the noise caveat, which is what distinguishes it from a cherry-picked claim.
+12. "How was the FLOPs budget matched across protocols?" — All protocols consume equal total FLOPs (forward+backward+optimizer+ALS amortized); LoRA's advantage is trainable-parameter/memory cost, not FLOPs — the poster says "lowest trainable-parameter cost," not "compute efficiency."
+13. "What's the connection between your ablation and the 2×2 framework?" — The ablation isolates *which component* of the ASP optimizer causes failure; the 2×2 framework isolates *where* the failure lives relative to baselines. They answer complementary questions — mechanism inside the method, and method's standing in the landscape.
 
 ## CUT LIST (for a strict 10-minute version)
 - The "timing no-op lesson" sentence in Repair 1.
 - The "positive feedback loop" detail in the theory section (keep one sentence).
 - One of the three repair details in the A-KD paragraph.
+- The FLOPs-normalization design-principle paragraph can compress to one sentence.
