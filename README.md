@@ -1,86 +1,85 @@
-# ASP vs LoRA: A Quasi-Factorial Comparison for LLM Post-Training
+# Alternating Optimization for LLM Post-Training
 
-> **状态**: 论文 v0.8 — Round 6 **Major Revision**. P1 机制实验已完成，P2 Conditional Go.
-> **核心**: 准析因 2×2 比较框架，8 架构实测，深度 24–28 层失稳转变，组件归因 + 跨域正则化验证
-> **路线图**: [todo.md](todo.md) — P0+P1 已完成，待独立复核 + 选刊
+**From Divergence to Verified Solutions** — a research project investigating why ALS-based post-training diverges on deep LLMs, and what provably works instead.
 
----
-
-## 文档导航
-
-| 文档 | 说明 |
-|------|------|
-| **[论文 v0.8](paper/paper_draft_v0.7.md)** | Canonical draft（1022 行，10 项发现，17 实验，6 核心结论） |
-| **[实验注册表](docs/experiment-registry.md)** | 8 架构 × 4 协议 × 50–800 步矩阵，含证据标签 |
-| **[主张→证据映射](docs/claims-audit.md)** | 14 项核心主张，含 observed/transcribed/inferred/predicted 标签 |
-| **[当前路线图](todo.md)** | P0+P1 已完成 / P2 Conditional Go / 待独立复核 |
-| **[综合评估](docs/p2-synthesis.md)** | P1 校准 + 收敛匹配 + Conditional Go 决策 |
-| **[全部发现](docs/all-findings.md)** | 21 项发现，证据强度 + 论文状态标记 |
-| **[公平比较方法论](docs/fair_comparison_methodology.md)** | 准析因设计的核心方法论 |
-| **[数学分析](docs/math-analysis.md)** | ALS 重建损失、收敛理论、PAC-Bayes 分析 |
-| **[深度失稳因果理论](docs/causal_depth_boundary.md)** | SCM 框架下的残差干预传播模型 |
-| **[机制笔记](docs/mechanism-notes.md)** | 组件归因设计、隐式正则化验证缺口 |
-| **[P0.2 可行性报告](docs/p0.2-feasibility.md)** | HellaSwag + 参数量匹配实验评估 |
-| **[v3.4 LaTeX](paper/paper_v3.4.tex)** / **[PDF](paper/paper_v3.4.pdf)** | 前一版本 LaTeX 源码及编译 PDF |
-| **[修订计划](paper/revision_plan.md)** | Round 1 评审应对方案 |
-
-### 子目录
-
-| 目录 | 内容 | 文件数 |
-|------|------|--------|
-| [`docs/archive/`](docs/archive/) | 历史评分、早期实验报告、已被取代的评估 | 24 |
-| [`docs/reference/`](docs/reference/) | 算法详解、协议实现、评估标准（教育性文档） | 9 |
-| [`paper/reviews/`](paper/reviews/) | Round 1–6 同行评审记录 | 6 |
-| [`runs/p1.*/`](runs/) | P1 实验产物（组件归因、跨深度、正则化） | 3 实验 |
+**Author**: jianghuanyun · **Supervisor**: Prof. Hoi To Wai · CUHK CSE
 
 ---
 
-## 核心发现
+## Overview
 
-| # | 发现 | 证据强度 | 来源 |
-|---|------|---------|------|
-| 1 | LoRA r=8 在 $L/d_h \leq 0.035$ 架构上达到充分性平台 | 5/5 模型族，中英跨语言，100–1600 步 | §5.2, §5.7 |
-| 2 | 全秩微调在小数据上灾难性过拟合（PPL=1.25 但 HellaSwag −3.2pp） | N=3, 7B 规模, 3 下游任务 | §5.6.2–5.6.4 |
-| 3 | **秩充分性定律** $r_{\min} = \eta \cdot L/d_h$ ($\eta \approx 230$) | SmolLM2 10 点精细校准，η±8% | §6.6–6.8 |
-| 4 | ASP 在 ≤24 层收敛，≥28 层失稳 | 8/8 架构确认，11 次 7B 尝试 | §5.6 |
-| 5 | ASP 隐式正则化：C4 跨域验证（1.9× 优于 AdamW） | 收敛匹配，WT2+C4 双数据集 | §5.4, §5.9.3 |
-| 6 | ASP 组件归因：ALS 为主要瓶颈（+3.1 PPL） | 4 条件嵌套消融，N=3 seeds | §5.9.1 |
-| 7 | ASP 收敛质量由预训练质量主导，非深度 | 4 模型 12–28L | §5.9.2 |
-| 8 | 低秩 ALS 始终负收益（7/7 比较） | 3 模型，100–800 步 | §5.8 |
-| 9 | M-index ($M<1$) 为轻量记忆化诊断 | 跨尺度 0.5B→7B | §6.7 |
-| 10 | 7B B/D 8.3× PPL 差异由过拟合驱动，非秩不足 | 参数匹配基线确认 | §5.7 |
+Alternating Least Squares (ALS) offers a closed-form alternative to gradient-based fine-tuning — one matrix solve replaces hundreds of gradient steps. Applied to LLM post-training, however, ALS **works on shallow models (≤24 layers) but catastrophically diverges on deep models (≥28 layers)** — 11/11 observed attempts on Qwen2.5-7B failed.
+
+This project establishes, through controlled experiments and a 2×2 factorial framework (optimizer × parameter form):
+
+1. **The cause** — ALS weight modification (not noise, optimizer, or hook overhead) is the necessary-and-sufficient cause of divergence, via a five-condition ablation.
+2. **The theory** — residual connections amplify ALS perturbations by ρ≈1.08 per layer, predicting a 25–28-layer depth boundary consistent with 8 architectures.
+3. **The failed repairs** — gradient injection, low-rank probing, and soft-target distillation all provably fail matched-budget controls.
+4. **The verified solutions** — AdamW full-rank (1.25 PPL, 58× below baseline), AdamW+LoRA (10.41 PPL, 7×), plain SGD with fixed lr (6.83 PPL, 10.7×) on Qwen2.5-7B.
 
 ---
 
-## 快速开始
+## Key Deliverables
+
+| Deliverable | File | Description |
+|---|---|---|
+| **Poster** | [`jianghuanyun_Poster.pdf`](jianghuanyun_Poster.pdf) | 36×48in portrait, judged-poster presentation |
+| **Final Report** | [`Final_Report.pdf`](Final_Report.pdf) | Full report with references |
+| **Final Report (no refs)** | [`Final_Report_NoRefs.pdf`](Final_Report_NoRefs.pdf) | Report without reference section |
+| **Final Report + VeriGuide** | [`Final_Report_with_VeriGuide.pdf`](Final_Report_with_VeriGuide.pdf) | Report merged with AI-detection report |
+| **Presentation speech** | [`docs/presentation_speech.md`](docs/presentation_speech.md) | 10–15 min English talk, timed, with Q&A |
+| **Problem-solution report** | [`docs/problem-solution-report.md`](docs/problem-solution-report.md) | Concise problem → solution summary |
+| **Final report (md)** | [`docs/final-report.md`](docs/final-report.md) | Detailed findings, methods, evidence |
+
+## Documentation
+
+| Doc | Description |
+|------|-------------|
+| [`docs/diag-injection-report.md`](docs/diag-injection-report.md) | Timing-no-op diagnosis of gradient injection |
+| [`docs/fair_comparison_methodology.md`](docs/fair_comparison_methodology.md) | FLOPs-normalized 2×2 factorial design |
+| [`docs/math-analysis.md`](docs/math-analysis.md) | ALS reconstruction loss, convergence theory |
+| [`docs/causal_depth_boundary.md`](docs/causal_depth_boundary.md) | Residual-amplification causal theory |
+| [`docs/experiment-registry.md`](docs/experiment-registry.md) | Full experiment matrix with evidence tags |
+| [`docs/claims-audit.md`](docs/claims-audit.md) | Claim → artifact traceability |
+| [`docs/all-findings.md`](docs/all-findings.md) | All findings with evidence strength |
+| [`docs/p2-synthesis.md`](docs/p2-synthesis.md) | P2 comprehensive assessment |
+
+## Key Experiments (reproducible)
+
+| Script | Experiment | Result file |
+|--------|-----------|-------------|
+| [`experiments/_diverge_cause_7b.py`](experiments/_diverge_cause_7b.py) | 5-condition controlled ablation | [`runs/diverge_cause_7b.json`](runs/diverge_cause_7b.json) |
+| [`experiments/_pure_sgd_96c_7b.py`](experiments/_pure_sgd_96c_7b.py) | Decisive pure-SGD control (96c) | [`runs/pure_sgd_96c_7b.json`](runs/pure_sgd_96c_7b.json) |
+| [`experiments/_probe_rank_sweep.py`](experiments/_probe_rank_sweep.py) | Low-rank probe sweep (r=64/256/1024) | [`runs/probe_rank_sweep_opt125m.json`](runs/probe_rank_sweep_opt125m.json) |
+| [`experiments/_lr_schedule_sgd.py`](experiments/_lr_schedule_sgd.py) | lr-schedule verification | [`runs/lr_schedule_sgd_opt125m.json`](runs/lr_schedule_sgd_opt125m.json) |
+| [`experiments/_kd_als.py`](experiments/_kd_als.py) | Soft-target (distillation) ALS | [`runs/kd_als_opt125m.json`](runs/kd_als_opt125m.json) |
+| [`experiments/_flops_sweep.py`](experiments/_flops_sweep.py) | FLOPs-normalized comparison | [`runs/flops_sweep_opt125m.json`](runs/flops_sweep_opt125m.json) |
+
+## Quick Start
 
 ```bash
-pip install -e ".[dev]"
-python experiments/runner.py experiments/configs/base.yaml
-python experiments/analysis.py logs/
-pytest tests/  # 122 passed, 2 pre-existing failures (bitsandbytes GPU dependency)
+pip install -e .
+pytest tests/  # framework tests
+python experiments/_diverge_cause_7b.py   # ablation (requires GPU + Qwen2.5-7B)
 ```
 
----
-
-## 仓库结构
+## Repository Structure
 
 ```
-├── paper/paper_draft_v0.7.md    # 唯一论文草稿 (v0.8, 1022 行)
-├── paper/paper_v3.4.tex         # 前一版本 LaTeX 源码
-├── paper/paper_v3.4.pdf         # 前一版本编译 PDF
-├── paper/revision_plan.md       # Round 1 评审应对方案
-├── docs/
-│   ├── claims-audit.md          # 主张→产物可追溯性
-│   ├── experiment-registry.md   # 全实验矩阵
-│   ├── p2-synthesis.md          # P2 综合评估
-│   ├── all-findings.md          # 21 项发现汇总
-│   ├── archive/                 # 历史快照（24 文件）
-│   └── reference/               # 教育性文档（9 文件）
-├── altopt/                      # 核心框架（ALS, SGD, Perturb, LoRA, trainer）
-├── experiments/                 # 实验脚本（含 _p1.1/_p1.2/_p1.3）
-├── tests/                       # 122 测试
-└── runs/                        # 数据产物（p1.1/p1.2/p1.3 结果已入库）
+├── altopt/                    # Core framework (ALS, SGD, LoRA, trainer, evaluator)
+├── experiments/               # Experiment scripts (_*.py are key verified runs)
+├── docs/                      # Reports, methodology, theory, speech
+│   ├── archive/               # Historical superseded reports
+│   ├── figures/               # Generated figures
+│   └── reference/             # Educational deep-dives
+├── paper/                     # Paper draft, LaTeX, reviews
+├── runs/                      # Machine-readable experiment results
+├── tests/                     # Framework unit tests
+├── tutorials/                 # Step-by-step framework walkthrough
+├── figures/                   # Paper figures
+├── jianghuanyun_Poster.pdf    # Poster deliverable
+├── Final_Report*.pdf          # Report deliverables
+└── README.md                  # This file
 ```
 
 ## License
