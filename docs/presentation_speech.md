@@ -10,7 +10,7 @@
 #
 # JUDGING-CRITERIA MAP (Faculty panel):
 #   C1 Problem solving/contribution  -> "Contributions" poster block + Sec 2-5
-#   C2 Results and significance      -> quantified headline (58x/10.7x/7x) + Finding 1-5
+#   C2 Results and significance      -> quantified headline (58x/10.7x/7x) + Finding 1-3
 #   C3 Presentation/delivery         -> verdict strip + story arc + one-sentence summary
 #   C4 Q&A knowledge                 -> 12 prepared answers below, organized by criterion
 
@@ -43,7 +43,7 @@ So the research question is twofold, and it defines everything that follows:
 
 To answer both questions rigorously, we built a systematic comparison framework — and I want to explain its logic, because it shapes every experiment that follows.
 
-**[3:00-5:30] 3. THE 2×2 FRAMEWORK — its logic (SLIDE: Methods + Finding 4)**
+**[3:00-5:30] 3. THE 2×2 FRAMEWORK — its logic (SLIDE: Methods + Finding 3)**
 
 To answer both questions rigorously, we built a systematic comparison framework — and I want to explain it slowly, because it shapes every experiment that follows.
 
@@ -68,7 +68,7 @@ Now — here is the key thing about the 2×2 grid. Look at the ASP column. **Bot
 
 So the 2×2 framework localizes the problem precisely: **the failure lives in the ASP optimizer, not in the model and not in the parameter form.** That is the one problem I want to focus on for the rest of the talk.
 
-**[6:00-9:00] 4. FOCUS: WHY DOES ASP FAIL? — controlled ablation (SLIDE: Finding 5 + ablation chart)**
+**[6:00-9:00] 4. FOCUS: WHY DOES ASP FAIL? — controlled ablation (SLIDE: Finding 1 + ablation chart)**
 
 ASP has three components: ALS, SGD, and perturbation. Which one causes the divergence? Prior work blamed vague things — "numerical instability," "optimizer mismatch," "the noise." I wanted evidence, so I ran a **five-condition controlled ablation** on Qwen2.5-7B, holding data, seeds, and budget fixed, and turning components on and off one at a time.
 
@@ -84,7 +84,7 @@ The verdict is unambiguous: **ALS weight modification — not the noise, not the
 
 And there is a causal explanation, not just a correlation. The key is the **residual connection** — the architectural feature that makes deep transformers trainable at all. Each layer computes h_{l+1} = h_l + f_l(h_l). When ALS modifies the output layer, the perturbation propagates backward through every residual connection, and each layer multiplies it by roughly 1.08 — the identity path preserves it, and the nonlinearity adds about eight percent. Over 27 layers that is an **eightfold amplification**, while SGD's per-cycle recovery is only about 0.005 — a sixteen-hundred-to-one asymmetry. The model cannot heal faster than the perturbation grows. The theory predicts the boundary **between 25 and 28 layers**, consistent with the observed 24-converges / 28-diverges split. (Honest caveat: 25–27 layers were not directly tested — this is a calibrated prediction.)
 
-**[9:00-11:45] 5. FOCUS: CAN IT BE FIXED? — three repairs, all fail (SLIDE: Findings 1-3)**
+**[9:00-11:45] 5. FOCUS: CAN IT BE FIXED? — three repairs, all fail (SLIDE: Finding 2 + Repair analysis)**
 
 Now the natural response to any diagnosis is to fix it. I designed three repairs — and rigorously establishing that they fail is one of the most valuable results of this project. Let me be honest about each.
 
@@ -98,7 +98,7 @@ We fixed the timing and ran the decisive control: **matched-budget pure SGD vers
 
 So the design space of "salvaging ALS" is closed. In every case, a matched SGD control matches or beats the ALS mechanism.
 
-**[11:45-13:30] 6. RESOLVING THE RESEARCH QUESTION — what works (SLIDE: Finding 4 + Verified Solutions)**
+**[11:45-13:30] 6. RESOLVING THE RESEARCH QUESTION — what works (SLIDE: Finding 3 + Verified Solutions)**
 
 Let me now close the loop and answer the two research questions I posed at the start — because that is what "solving" means for this project: not salvaging a broken method, but answering the questions definitively.
 
