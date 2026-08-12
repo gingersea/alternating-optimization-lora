@@ -4,7 +4,13 @@
 # CUHK Department of Computer Science and Engineering
 #
 # Speaker notes: target ~140 words/min. Bold = emphasis. [SLIDE] markers map to poster sections.
-# Total ≈ 1850 words ≈ 13.5 minutes at 140 wpm. Cut suggestions marked (CUT) for the 10-min version.
+# Total ≈ 1560 words ≈ 11 minutes at 140 wpm. Cut suggestions marked (CUT) for the 10-min version.
+#
+# JUDGING-CRITERIA MAP (Faculty panel):
+#   C1 Problem solving/contribution  -> "Contributions" poster block + Section 2-5 of the speech
+#   C2 Results and significance      -> quantified headline (58x/10.7x/7x) + Finding 1-5
+#   C3 Presentation/delivery         -> verdict strip + 4-step story arc + one-sentence summary
+#   C4 Q&A knowledge                 -> 12 prepared answers below, organized by criterion
 
 ---
 
@@ -102,13 +108,27 @@ Thank you. My poster walks through each of these results with the experiment cha
 - 12:30 Conclusion
 - 13:30 Close → Q&A
 
-## ANTICIPATED Q&A (with crisp answers)
-1. "So you're saying your own method doesn't work?" — The ALS family doesn't work *on deep models*, and we established the specific mechanism by controlled evidence, plus why the repairs can't fix it. The project's contribution is the diagnosis and the saved design space, plus the verified alternatives.
-2. "Is correlation 0.99981 meaningful?" — It's on the full 96-cycle trajectory, mean per-cycle difference 0.116 PPL. The two curves are visually and statistically indistinguishable.
-3. "Why is AdamW 1.25 but plain SGD 6.83?" — Different budgets: AdamW at 800 steps is heavily trained on a small set (overfitting risk noted); SGD at 4800 steps is the fair matched control to A-SYNC. Both are valid operating points; LoRA splits the difference on efficiency.
-4. "Boundary 25–28 layers from only a few model depths?" — Honest answer: it's a two-point boundary (≤24 / ≥28), consistent across 8 architectures; the *trend* is predicted, the exact constant is calibrated and 25–27 layers were not directly tested. The poster says "consistent with observation."
-5. "Why WikiText-2 only?" — Acknowledged limitation; cross-domain (C4, HellaSwag) is listed as future work in the report.
-6. "A-KD 52.6 vs 52.4 — isn't that just noise?" — Exactly the point: the closed-form solver's advantage is *within noise*, i.e., nonexistent at this scale. That's the negative result.
+## ANTICIPATED Q&A — organized by judging criteria
+
+### Criterion 1: Problem solving (contribution)
+1. "So you're saying your own method doesn't work?" — The ALS family doesn't work *on deep models*, and we established the specific mechanism by controlled evidence, plus why the repairs can't fix it. The project's contribution is fourfold: a diagnosis (first controlled evidence isolating ALS weight modification), a causal theory with a falsifiable boundary, a saved design space (three plausible repairs proven ineffective — future researchers won't repeat them), and verified alternatives with a corrected evaluation harness.
+2. "What exactly did you contribute, beyond a negative result?" — Three things that outlive the negative result: (1) the ablation method that isolates *which* component of a hybrid optimizer causes failure; (2) a falsifiable amplification theory that predicts a depth boundary consistent with 8 architectures; (3) the harness audit — we found and corrected our own tokenizer/label bugs, a discipline contribution that transfers to any evaluation setup.
+
+### Criterion 2: Results and significance (achievement)
+3. "What's the headline number?" — Relative to the pretrained 73.1 PPL baseline: AdamW full-rank achieves 1.25 PPL (a 58× improvement), plain SGD 6.83 (10.7×), AdamW+LoRA 10.41 (7×) — all large, real improvements over doing nothing. The decisive control: A-SYNC injection 6.82 vs pure SGD 6.83, trajectory correlation 0.99981.
+4. "Why is AdamW 1.25 but plain SGD 6.83?" — Different budgets: AdamW at 800 steps is heavily trained on a small set (overfitting risk noted — in-distribution val only); SGD at 4800 steps is the fair matched control to A-SYNC. Both are valid operating points; LoRA splits the difference on parameter cost.
+5. "What's the significance of the negative results?" — They close three plausible research directions with matched-budget evidence, and identify *why* each fails (the closed-form solve is redundant with the CE gradient direction). That's a saved direction, not a dead end — the significance is preventing others from spending a year on it.
+
+### Criterion 3: Presentation and delivery (clarity and quality)
+6. "Can you summarize the whole project in one sentence?" — "On deep LLMs, ALS weight modification causes divergence via residual amplification; all three natural repairs are provably ineffective against matched SGD baselines; and verified alternatives — AdamW, LoRA, plain SGD — deliver up to 58× improvement over the pretrained baseline, with a corrected evaluation harness."
+7. "How is the story structured on your poster?" — A verdict strip up top (red/green: ALS family diverges, SGD/AdamW/LoRA converge), a 4-step story arc on the left (diverges → mechanism → repairs fail → baselines verified), five evidence charts on the right — all with pretrained baseline reference lines — and verified solutions with quantified gains in the footer.
+
+### Criterion 4: Q&A (knowledge of subjects)
+8. "Is correlation 0.99981 meaningful?" — It's on the full 96-cycle trajectory, mean per-cycle difference 0.116 PPL. Honest caveat: Pearson correlation on trending series is inflated — we additionally report the per-cycle mean difference and matched final PPL; the two curves are visually and statistically indistinguishable under those metrics too.
+9. "Boundary 25–28 layers from only a few model depths?" — Honest answer: it's a two-point boundary (≤24 / ≥28), consistent across 8 architectures; the *trend* is predicted, the exact constant is calibrated and 25–27 layers were not directly tested. The poster says "consistent with observation."
+10. "Why WikiText-2 only?" — Acknowledged limitation; cross-domain (C4, HellaSwag) is listed as future work in the report. PPL is a proxy for in-distribution fit, not generalization.
+11. "A-KD 52.6 vs 52.4 — isn't that just noise?" — Exactly the point: the closed-form solver's advantage is *within noise*, i.e., nonexistent at this scale. That's the negative result — we report it honestly with the noise caveat, which is what distinguishes it from a cherry-picked claim.
+12. "How was the FLOPs budget matched across protocols?" — All protocols consume equal total FLOPs (forward+backward+optimizer+ALS amortized); LoRA's advantage is trainable-parameter/memory cost, not FLOPs — we corrected the poster to say "lowest trainable-parameter cost" rather than "compute efficiency."
 
 ## CUT LIST (for a strict 10-minute version)
 - The "timing no-op lesson" sentence in Repair 1.
